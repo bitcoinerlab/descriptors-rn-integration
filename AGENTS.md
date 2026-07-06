@@ -1,3 +1,5 @@
-# Expo HAS CHANGED
+# Expo Version
 
-Read the exact versioned docs at https://docs.expo.dev/versions/v57.0.0/ before writing any code.
+Use the Expo SDK version pinned in `package.json` when checking docs or making
+native changes. Do not assume latest Expo APIs without verifying the installed
+SDK.

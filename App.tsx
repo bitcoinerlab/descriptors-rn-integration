@@ -1,11 +1,17 @@
 import { useState } from "react";
-import type {
-  BitBoxScriptConfig,
-  ConnectedBitBoxClient,
-} from "@bitcoinerlab/bitbox-react-native";
-import { HDKey } from "@scure/bip32";
-import { base64 } from "@scure/base";
-import { Transaction, bip32Path, p2wpkh } from "@scure/btc-signer";
+import { BIP32, Output, Psbt, networks } from "@bitcoinerlab/descriptors";
+import {
+  connectors,
+  displayAddress,
+  getMasterFingerprint,
+  getVersion,
+  getXpub,
+  keyExpression,
+  registerWallet,
+  signers,
+  type Manager,
+} from "@bitcoinerlab/descriptors/bitbox";
+import type { ConnectedBitBoxClient } from "@bitcoinerlab/bitbox-react-native";
 import {
   Button,
   Keyboard,
@@ -21,16 +27,14 @@ import {
   View,
 } from "react-native";
 
-const P2WPKH_ACCOUNT = "m/84'/0'/0'";
-const P2WPKH_RECEIVE = `${P2WPKH_ACCOUNT}/0/0`;
-const P2WPKH_CONFIG: BitBoxScriptConfig = { simpleType: "p2wpkh" };
-
-const MULTISIG_ACCOUNT = "m/48'/0'/0'/2'";
-const MULTISIG_RECEIVE = `${MULTISIG_ACCOUNT}/0/0`;
-const MULTISIG_OTHER_XPUBS = [
-  "xpub6Esa6esRHkbuXtbdDKqu3uWjQ1GpK39WW2hxbUAN4L3TxrwDyghEwBtUYZ8uK8LZh3tJ3pjWEpxng9tjfo7RT9BaZKV2T3EPvmZ6N1LgSdj",
-  "xpub6FJ6FAAFUzuWQAKyT98Ngs6UwsoPfPCdmepqX2aLLPT54M85ARsWzPciFd49foStMwhWgfiHP6PnMgPrWLrBJpUHgqw8vZPd5ov8uSfW2vo",
-];
+const BITCOIN_NETWORK = networks.bitcoin;
+const P2WPKH_ORIGIN = "/84'/0'/0'";
+const P2WPKH_KEY_PATH = "/0/*";
+const MULTISIG_ORIGIN = "/48'/0'/0'/2'";
+const MULTISIG_KEY_PATH = "/0/*";
+const FAKE_UTXO_VALUE = 100_000n;
+const FAKE_SEND_VALUE = 90_000n;
+const MULTISIG_POLICY_NAME = "RN integration multisig";
 
 type LogLine = {
   id: number;
@@ -47,79 +51,112 @@ function summarizeValue(value: string): string {
   return `${value.slice(0, 10)}...${value.slice(-8)} (length=${value.length})`;
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  if (!/^(?:[0-9a-fA-F]{2})*$/.test(hex)) {
-    throw new Error(`Invalid hex string: ${hex}`);
-  }
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
+function bytesToHex(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function fingerprintNumber(rootFingerprint: string): number {
-  const bytes = hexToBytes(rootFingerprint);
-  if (bytes.length !== 4) {
-    throw new Error(`Root fingerprint must be 4 bytes: ${rootFingerprint}`);
+function littleEndianHex(value: bigint | number, byteLength: number): string {
+  let remaining = BigInt(value);
+  if (remaining < 0n) throw new Error(`Negative integer: ${value}`);
+
+  const bytes: string[] = [];
+  for (let i = 0; i < byteLength; i++) {
+    bytes.push(Number(remaining & 0xffn).toString(16).padStart(2, "0"));
+    remaining >>= 8n;
   }
-  return (
-    bytes[0] * 0x1000000 +
-    bytes[1] * 0x10000 +
-    bytes[2] * 0x100 +
-    bytes[3]
+  if (remaining !== 0n) throw new Error(`Integer too large: ${value}`);
+  return bytes.join("");
+}
+
+function varIntHex(value: number): string {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid varint: ${value}`);
+  }
+  if (value < 0xfd) return littleEndianHex(value, 1);
+  if (value <= 0xffff) return `fd${littleEndianHex(value, 2)}`;
+  if (value <= 0xffffffff) return `fe${littleEndianHex(value, 4)}`;
+  return `ff${littleEndianHex(value, 8)}`;
+}
+
+function fakeFundingTxHex({
+  scriptPubKey,
+  value,
+}: {
+  scriptPubKey: Uint8Array;
+  value: bigint;
+}): string {
+  return [
+    "02000000",
+    "01",
+    "00".repeat(32),
+    "ffffffff",
+    "00",
+    "ffffffff",
+    "01",
+    littleEndianHex(value, 8),
+    varIntHex(scriptPubKey.length),
+    bytesToHex(scriptPubKey),
+    "00000000",
+  ].join("");
+}
+
+function accountXpubFromSeed(seedByte: number, originPath: string): string {
+  const seed = new Uint8Array(32).fill(seedByte);
+  const relativePath = originPath.startsWith("/")
+    ? originPath.slice(1)
+    : originPath;
+  return BIP32.fromSeed(seed, BITCOIN_NETWORK)
+    .derivePath(relativePath)
+    .neutered()
+    .toBase58();
+}
+
+function otherMultisigKeys(): string[] {
+  return [2, 3].map(
+    (seedByte) =>
+      `${accountXpubFromSeed(seedByte, MULTISIG_ORIGIN)}${MULTISIG_KEY_PATH}`,
   );
 }
 
-async function generateFakeP2wpkhPsbt(
-  client: ConnectedBitBoxClient,
-): Promise<string> {
-  const rootFingerprint = await client.rootFingerprint();
-  const accountXpub = await client.btcXpub(
-    "btc",
-    P2WPKH_ACCOUNT,
-    "xpub",
-    false,
-  );
-  const account = HDKey.fromExtendedKey(accountXpub);
-  const child = account.deriveChild(0).deriveChild(0);
-  if (!child.publicKey) {
-    throw new Error("Could not derive child public key from BitBox xpub");
-  }
-
-  const payment = p2wpkh(child.publicKey);
-  const previousTx = new Transaction();
-  previousTx.addInput({
-    txid: "00".repeat(32),
-    index: 0xffffffff,
-    sequence: 0xffffffff,
+async function p2wpkhDescriptor(manager: Manager): Promise<string> {
+  const bitboxKey = await keyExpression({
+    manager,
+    originPath: P2WPKH_ORIGIN,
+    keyPath: P2WPKH_KEY_PATH,
   });
-  previousTx.addOutput({
-    amount: 100_000n,
-    script: payment.script,
-  });
+  return `wpkh(${bitboxKey})`;
+}
 
-  const tx = new Transaction();
-  tx.addInput({
-    txid: previousTx.id,
+async function multisigDescriptor(manager: Manager): Promise<string> {
+  const bitboxKey = await keyExpression({
+    manager,
+    originPath: MULTISIG_ORIGIN,
+    keyPath: MULTISIG_KEY_PATH,
+  });
+  return `wsh(sortedmulti(1,${[bitboxKey, ...otherMultisigKeys()].join(",")}))`;
+}
+
+async function generateFakeP2wpkhPsbt(manager: Manager): Promise<string> {
+  const descriptor = await p2wpkhDescriptor(manager);
+  const fundingOutput = new Output({
+    descriptor,
     index: 0,
-    nonWitnessUtxo: previousTx.toBytes(),
-    witnessUtxo: {
-      amount: 100_000n,
-      script: payment.script,
-    },
-    bip32Derivation: [
-      [
-        child.publicKey,
-        {
-          fingerprint: fingerprintNumber(rootFingerprint),
-          path: bip32Path(P2WPKH_RECEIVE),
-        },
-      ],
-    ],
+    network: BITCOIN_NETWORK,
   });
-  tx.addOutputAddress(payment.address, 90_000n);
-  return base64.encode(tx.toPSBT());
+  const destinationOutput = new Output({
+    descriptor,
+    index: 1,
+    network: BITCOIN_NETWORK,
+  });
+  const psbt = new Psbt({ network: BITCOIN_NETWORK });
+  const txHex = fakeFundingTxHex({
+    scriptPubKey: fundingOutput.getScriptPubKey(),
+    value: FAKE_UTXO_VALUE,
+  });
+
+  fundingOutput.updatePsbtAsInput({ psbt, txHex, vout: 0 });
+  destinationOutput.updatePsbtAsOutput({ psbt, value: FAKE_SEND_VALUE });
+  return psbt.toBase64();
 }
 
 export default function App() {
@@ -137,106 +174,89 @@ export default function App() {
   }
 
   function add(text: string) {
-    console.log(`[BitBoxSmoke] ${text}`);
+    console.log(`[BitBoxIntegration] ${text}`);
     setLog((lines) => [...lines, { id: Date.now() + lines.length, text }]);
   }
 
   function shareLog() {
     const message = log.map((line) => line.text).join("\n");
     void Share.share({
-      title: "BitBox smoke test logs",
-      message: message.length > 0 ? message : "No BitBox smoke test logs yet.",
+      title: "BitBox integration test logs",
+      message:
+        message.length > 0 ? message : "No BitBox integration test logs yet.",
     });
   }
 
-  function runSmokeTest() {
-    void runWithClient("Running read-only smoke test...", async (client) => {
-      await readBasics(client);
+  function runReadOnlyTest() {
+    void runWithManager(
+      "Running read-only descriptors integration test...",
+      async (manager) => {
+        await readBasics(manager);
 
-      add("Reading BTC receive address without device display...");
-      const address = await client.btcAddress(
-        "btc",
-        P2WPKH_RECEIVE,
-        P2WPKH_CONFIG,
-        false,
-      );
-      add(`BTC address OK: ${summarizeValue(address)}`);
-    });
+        add("Building p2wpkh descriptor through keyExpression...");
+        const descriptor = await p2wpkhDescriptor(manager);
+        add(`Descriptor OK: ${summarizeValue(descriptor)}`);
+
+        add("Deriving receive address locally through Output...");
+        const address = new Output({
+          descriptor,
+          index: 0,
+          network: BITCOIN_NETWORK,
+        }).getAddress();
+        add(`Descriptor address OK: ${summarizeValue(address)}`);
+      },
+    );
   }
 
   function runDisplayAddressTest() {
-    void runWithClient(
-      "Running device-display address smoke test...",
-      async (client) => {
-        add("Requesting BTC receive address on device display...");
-        const address = await client.btcAddress(
-          "btc",
-          P2WPKH_RECEIVE,
-          P2WPKH_CONFIG,
-          true,
+    void runWithManager(
+      "Running descriptor display-address integration test...",
+      async (manager) => {
+        add("Building p2wpkh descriptor through keyExpression...");
+        const descriptor = await p2wpkhDescriptor(manager);
+
+        add("Requesting descriptor receive address on device display...");
+        const address = await displayAddress({
+          descriptor,
+          manager,
+          index: 0,
+        });
+        add(
+          typeof address === "string"
+            ? `Displayed BTC address OK: ${summarizeValue(address)}`
+            : "Displayed BTC address OK.",
         );
-        add(`Displayed BTC address OK: ${summarizeValue(address)}`);
       },
     );
   }
 
   function runRegistrationTest() {
-    void runWithClient(
-      "Running multisig registration smoke test...",
-      async (client) => {
-        add("Reading multisig account xpub without device display...");
-        const ownXpub = await client.btcXpub(
-          "btc",
-          MULTISIG_ACCOUNT,
-          "xpub",
-          false,
+    void runWithManager(
+      "Running descriptors multisig registration integration test...",
+      async (manager) => {
+        add("Building 1-of-3 multisig descriptor through keyExpression...");
+        const descriptor = await multisigDescriptor(manager);
+        add(`Multisig descriptor OK: ${summarizeValue(descriptor)}`);
+
+        add("Registering multisig wallet. Confirm on the BitBox if prompted.");
+        await registerWallet({
+          descriptor,
+          manager,
+          policyName: MULTISIG_POLICY_NAME,
+        });
+        add("registerWallet OK.");
+
+        add("Displaying registered multisig receive address on the BitBox...");
+        const address = await displayAddress({
+          descriptor,
+          manager,
+          index: 0,
+        });
+        add(
+          typeof address === "string"
+            ? `Multisig address OK: ${summarizeValue(address)}`
+            : "Multisig display call OK.",
         );
-        add(`Multisig account xpub OK: ${summarizeValue(ownXpub)}`);
-
-        const multisigConfig: BitBoxScriptConfig = {
-          multisig: {
-            threshold: 1,
-            xpubs: [ownXpub, ...MULTISIG_OTHER_XPUBS],
-            ourXpubIndex: 0,
-            scriptType: "p2wsh",
-          },
-        };
-
-        add("Checking multisig registration state...");
-        const registeredBefore = await client.btcIsScriptConfigRegistered(
-          "btc",
-          multisigConfig,
-          MULTISIG_ACCOUNT,
-        );
-        add(`Registered before: ${registeredBefore}`);
-
-        if (!registeredBefore) {
-          add("Registering multisig smoke account. Confirm on the BitBox.");
-          await client.btcRegisterScriptConfig(
-            "btc",
-            multisigConfig,
-            MULTISIG_ACCOUNT,
-            "autoXpubTpub",
-            "RN smoke multisig",
-          );
-          add("Registration call OK.");
-        }
-
-        const registeredAfter = await client.btcIsScriptConfigRegistered(
-          "btc",
-          multisigConfig,
-          MULTISIG_ACCOUNT,
-        );
-        add(`Registered after: ${registeredAfter}`);
-
-        add("Reading multisig receive address without device display...");
-        const address = await client.btcAddress(
-          "btc",
-          MULTISIG_RECEIVE,
-          multisigConfig,
-          false,
-        );
-        add(`Multisig address OK: ${summarizeValue(address)}`);
       },
     );
   }
@@ -245,34 +265,41 @@ export default function App() {
     const trimmedPsbt = psbt.trim();
     if (!trimmedPsbt) {
       resetLog();
-      add("Paste a base64 PSBT before running the PSBT signing smoke test.");
+      add("Paste a base64 PSBT before running the PSBT signing integration test.");
       return;
     }
-    void runWithClient("Running PSBT signing smoke test...", async (client) => {
-      add("Signing pasted PSBT with forced p2wpkh m/84'/0'/0' config...");
-      const signedPsbt = await client.btcSignPSBT(
-        "btc",
-        trimmedPsbt,
-        { scriptConfig: P2WPKH_CONFIG, keypath: P2WPKH_ACCOUNT },
-        "default",
-      );
-      add(`Signed PSBT OK: ${summarizeValue(signedPsbt)}`);
-    });
+    void runWithManager(
+      "Running descriptors PSBT signing integration test...",
+      async (manager) => {
+        add("Parsing pasted bitcoinjs PSBT...");
+        const parsedPsbt = Psbt.fromBase64(trimmedPsbt, {
+          network: BITCOIN_NETWORK,
+        });
+
+        add("Signing PSBT through signers.sign({ psbt, manager })...");
+        const signedPsbt = await signers.sign({ psbt: parsedPsbt, manager });
+        setPsbt(signedPsbt);
+        add(`Signed PSBT OK: ${summarizeValue(signedPsbt)}`);
+      },
+    );
   }
 
   function runGenerateFakePsbtTest() {
-    void runWithClient("Generating fake p2wpkh PSBT...", async (client) => {
-      add("Deriving fake PSBT from BitBox account xpub locally...");
-      const generatedPsbt = await generateFakeP2wpkhPsbt(client);
-      setPsbt(generatedPsbt);
-      add(`Fake PSBT generated: ${summarizeValue(generatedPsbt)}`);
-      add("Now press Sign Pasted PSBT to test btcSignPSBT.");
-    });
+    void runWithManager(
+      "Generating fake descriptor p2wpkh PSBT...",
+      async (manager) => {
+        add("Deriving fake PSBT through Output.updatePsbtAsInput...");
+        const generatedPsbt = await generateFakeP2wpkhPsbt(manager);
+        setPsbt(generatedPsbt);
+        add(`Fake PSBT generated: ${summarizeValue(generatedPsbt)}`);
+        add("Now press Sign Pasted PSBT to test descriptors signers.sign.");
+      },
+    );
   }
 
-  async function runWithClient(
+  async function runWithManager(
     title: string,
-    run: (client: ConnectedBitBoxClient) => Promise<void>,
+    run: (manager: Manager, client: ConnectedBitBoxClient) => Promise<void>,
   ) {
     if (running) return;
     setRunning(true);
@@ -289,7 +316,13 @@ export default function App() {
       client = await connectBitBoxNovaBle({ timeoutMs: 60_000 });
 
       add(`Session: ${JSON.stringify(client.session, null, 2)}`);
-      await run(client);
+      add("Creating descriptors BitBox manager from provider client...");
+      const manager = connectors.fromClient({
+        client,
+        network: BITCOIN_NETWORK,
+        Output,
+      });
+      await run(manager, client);
     } catch (error) {
       add(`ERROR: ${errorMessage(error)}`);
     } finally {
@@ -305,17 +338,17 @@ export default function App() {
     }
   }
 
-  async function readBasics(client: ConnectedBitBoxClient) {
-    add("Reading firmware version...");
-    const version = await client.version();
+  async function readBasics(manager: Manager) {
+    add("Reading firmware version through descriptors...");
+    const version = await getVersion({ manager });
     add(`Version: ${version}`);
 
-    add("Reading root fingerprint...");
-    const rootFingerprint = await client.rootFingerprint();
-    add(`Root fingerprint: ${rootFingerprint}`);
+    add("Reading root fingerprint through descriptors...");
+    const rootFingerprint = await getMasterFingerprint({ manager });
+    add(`Root fingerprint: ${bytesToHex(rootFingerprint)}`);
 
-    add("Reading native BTC xpub without device display...");
-    const xpub = await client.btcXpub("btc", P2WPKH_ACCOUNT, "xpub", false);
+    add("Reading BTC account xpub through descriptors...");
+    const xpub = await getXpub({ manager, originPath: P2WPKH_ORIGIN });
     add(`BTC xpub OK: ${summarizeValue(xpub)}`);
   }
 
@@ -323,17 +356,17 @@ export default function App() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
       <Pressable style={styles.container} onPress={Keyboard.dismiss}>
-        <Text style={styles.eyebrow}>BitBox React Native Smoke Test</Text>
+        <Text style={styles.eyebrow}>BitBox React Native Integration</Text>
         <Text style={styles.title}>BitBox Nova BLE</Text>
         <Text style={styles.description}>
-          This tests BLE connect plus the native BTC methods. Read-only tests do
-          not prompt on the device. Display, registration, and PSBT signing tests
-          require BitBox confirmation. Full xpubs/PSBTs are not printed.
+          This tests BLE connect plus descriptors BitBox helpers. Read-only tests
+          do not prompt on the device. Display, registration, and PSBT signing
+          tests require BitBox confirmation. Full xpubs/PSBTs are not printed.
         </Text>
         <View style={styles.buttonRow}>
           <Button
-            title={running ? "Running..." : "Read-Only Smoke"}
-            onPress={runSmokeTest}
+            title={running ? "Running..." : "Read-Only Test"}
+            onPress={runReadOnlyTest}
             disabled={running}
           />
           <Button
@@ -352,7 +385,7 @@ export default function App() {
           style={styles.psbtInput}
           value={psbt}
           onChangeText={setPsbt}
-          placeholder="Optional: paste base64 PSBT for signing smoke test"
+          placeholder="Optional: paste base64 PSBT for signing integration test"
           placeholderTextColor="#667085"
           autoCapitalize="none"
           autoCorrect={false}

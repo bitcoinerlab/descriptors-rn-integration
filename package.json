@@ -1,12 +1,10 @@
 {
-  "name": "bitbox-rn-smoke",
+  "name": "bitbox-rn-integration",
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
     "@bitcoinerlab/bitbox-react-native": "file:../bitbox-react-native/bitcoinerlab-bitbox-react-native-0.1.0.tgz",
-    "@scure/base": "^2.2.0",
-    "@scure/bip32": "^2.2.0",
-    "@scure/btc-signer": "^2.2.0",
+    "@bitcoinerlab/descriptors": "file:../descriptors/packages/descriptors/bitcoinerlab-descriptors-3.1.7.tgz",
     "expo": "~54.0.0",
     "expo-dev-client": "~6.0.21",
     "expo-modules-core": "~3.0.30",

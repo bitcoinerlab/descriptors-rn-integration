@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "bitbox-rn-smoke",
-    "slug": "bitbox-rn-smoke",
+    "name": "bitbox-rn-integration",
+    "slug": "bitbox-rn-integration",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "bundleIdentifier": "com.bitcoinerlab.bitboxsmoke",
+      "bundleIdentifier": "com.bitcoinerlab.bitboxintegration",
       "supportsTablet": true
     },
     "android": {
