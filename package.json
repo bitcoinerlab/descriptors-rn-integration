@@ -5,6 +5,8 @@
   "dependencies": {
     "@bitcoinerlab/bitbox-react-native": "file:../bitbox-react-native/bitcoinerlab-bitbox-react-native-0.1.0.tgz",
     "@bitcoinerlab/descriptors": "file:../descriptors/packages/descriptors/bitcoinerlab-descriptors-3.1.7.tgz",
+    "@bitcoinerlab/descriptors-core": "file:../descriptors/bitcoinerlab-descriptors-core-3.1.7.tgz",
+    "buffer": "^6.0.3",
     "expo": "~54.0.0",
     "expo-dev-client": "~6.0.21",
     "expo-modules-core": "~3.0.30",
