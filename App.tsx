@@ -45,6 +45,8 @@ const TIMELOCK_POLICY_NAME = "RN integration timelock";
 const MESSAGE_TEXT = "BitBox React Native integration message";
 const EMPTY_STORE_JSON = "{}";
 
+type BitBoxTransport = "ble" | "usb";
+
 type LogLine = {
   id: number;
   text: string;
@@ -207,12 +209,14 @@ async function generateFakePsbt({
 
 export default function App() {
   const [running, setRunning] = useState(false);
+  const [selectedTransport, setSelectedTransport] =
+    useState<BitBoxTransport>("ble");
   const [psbt, setPsbt] = useState("");
   const [storeJson, setStoreJson] = useState(EMPTY_STORE_JSON);
   const [log, setLog] = useState<LogLine[]>([
     {
       id: 0,
-      text: "Ready. Use a physical iPhone and a BitBox Nova with Bluetooth enabled.",
+      text: "Ready. Select BLE or USB, then use a physical device and BitBox.",
     },
   ]);
 
@@ -452,6 +456,7 @@ export default function App() {
     run: (session: Session, client: ConnectedBitBoxClient) => Promise<void>,
   ) {
     if (running) return;
+    const transport = selectedTransport;
     setRunning(true);
     resetLog();
     let client: ConnectedBitBoxClient | undefined;
@@ -459,14 +464,20 @@ export default function App() {
     try {
       add(title);
       add(`Platform: ${Platform.OS}`);
+      add(`Selected transport: ${transport.toUpperCase()}`);
       add("Parsing descriptors store JSON...");
       const store = parseStoreJson(storeJson);
       add("Loading @bitcoinerlab/bitbox-react-native...");
-      const { connectBitBoxNovaBle } =
+      const { connectBitBoxNovaBle, connectBitBoxUsb } =
         await import("@bitcoinerlab/bitbox-react-native");
 
-      add("Connecting to BitBox Nova over BLE...");
-      client = await connectBitBoxNovaBle({ timeoutMs: 60_000 });
+      if (transport === "ble") {
+        add("Connecting to BitBox Nova over BLE...");
+        client = await connectBitBoxNovaBle({ timeoutMs: 60_000 });
+      } else {
+        add("Connecting to BitBox over USB...");
+        client = await connectBitBoxUsb({ timeoutMs: 60_000 });
+      }
 
       add(`Session: ${JSON.stringify(client.session, null, 2)}`);
       add("Creating descriptors BitBox session from provider client...");
@@ -520,13 +531,52 @@ export default function App() {
       >
         <Pressable style={styles.content} onPress={Keyboard.dismiss}>
           <Text style={styles.eyebrow}>BitBox React Native Integration</Text>
-          <Text style={styles.title}>BitBox Nova BLE</Text>
+          <Text style={styles.title}>BitBox Transport</Text>
           <Text style={styles.description}>
-            This tests BLE connect plus descriptors BitBox helpers. Read-only tests
-            do not prompt on the device. Display, registration, message signing,
-            and PSBT signing tests require BitBox confirmation. Full xpubs/PSBTs
-            are not printed.
+            This tests the selected transport plus descriptors BitBox helpers.
+            Read-only tests do not prompt on the device. Display, registration,
+            message signing, and PSBT signing tests require BitBox confirmation.
+            Full xpubs/PSBTs are not printed.
           </Text>
+          <Text style={styles.sectionLabel}>Transport</Text>
+          <View style={styles.transportSelector}>
+            <Pressable
+              style={[
+                styles.transportOption,
+                selectedTransport === "ble" && styles.transportOptionSelected,
+              ]}
+              onPress={() => setSelectedTransport("ble")}
+              disabled={running}
+            >
+              <Text
+                style={[
+                  styles.transportOptionText,
+                  selectedTransport === "ble" &&
+                    styles.transportOptionTextSelected,
+                ]}
+              >
+                BLE
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.transportOption,
+                selectedTransport === "usb" && styles.transportOptionSelected,
+              ]}
+              onPress={() => setSelectedTransport("usb")}
+              disabled={running}
+            >
+              <Text
+                style={[
+                  styles.transportOptionText,
+                  selectedTransport === "usb" &&
+                    styles.transportOptionTextSelected,
+                ]}
+              >
+                USB
+              </Text>
+            </Pressable>
+          </View>
           <Text style={styles.sectionLabel}>Descriptors Store JSON</Text>
           <TextInput
             style={styles.storeInput}
@@ -653,6 +703,30 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.6,
     textTransform: "uppercase",
+  },
+  transportSelector: {
+    flexDirection: "row",
+    alignSelf: "flex-start",
+    gap: 8,
+    borderRadius: 999,
+    backgroundColor: "#111827",
+    padding: 4,
+  },
+  transportOption: {
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+  },
+  transportOptionSelected: {
+    backgroundColor: "#f9fafb",
+  },
+  transportOptionText: {
+    color: "#98a2b3",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  transportOptionTextSelected: {
+    color: "#111827",
   },
   storeInput: {
     minHeight: 70,
