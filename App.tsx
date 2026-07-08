@@ -220,6 +220,11 @@ export default function App() {
     setLog([]);
   }
 
+  function resetStore() {
+    setStoreJson(EMPTY_STORE_JSON);
+    add("Reset descriptors store JSON to {}.");
+  }
+
   function add(text: string) {
     console.log(`[BitBoxIntegration] ${text}`);
     setLog((lines) => [...lines, { id: Date.now() + lines.length, text }]);
@@ -564,6 +569,7 @@ export default function App() {
               onPress={runMessageSignTest}
               disabled={running}
             />
+            <Button title="Reset Store" onPress={resetStore} disabled={running} />
             <Button title="Share Logs" onPress={shareLog} disabled={running} />
           </View>
           <TextInput
