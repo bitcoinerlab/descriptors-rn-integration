@@ -14,8 +14,9 @@ React Native, or descriptors dependencies to the library package itself.
 - Current native BitBox client methods: `version`, `rootFingerprint`, `btcXpub`,
   `btcAddress`, `btcRegisterScriptConfig`, `btcIsScriptConfigRegistered`,
   `btcSignPSBT`, and `btcSignMessage`.
-- Physical wallet-policy registration checks for 1-of-3 multisig and a single-key
-  relative-timelock Miniscript policy.
+- Physical policy registration checks for native `wsh(sortedmulti(...))`,
+  generic ordered `wsh(multi(...))`, and a single-key relative-timelock
+  Miniscript policy.
 - Shareable logs for real-device runs.
 - Fake local PSBT generation for signing-path validation without using real
   funds.
@@ -80,6 +81,12 @@ The `Register Timelock` button registers and displays a single-key
 `wsh(and_v(v:pk(...),older(5)))` policy. Use it with `Register Multisig` to tell
 whether a BitBox policy-registration failure is generic-policy-wide or specific
 to the multisig policy.
+
+The `Register Ordered Multi` button builds `wsh(multi(1,<bitboxKey>,<otherKey>))`
+and calls descriptors' public `registerPolicy(...)`, `displayAddress(...)`, and
+`signers.sign(...)` helpers. Use it to determine whether a physical BitBox Nova
+accepts ordered multisig through generic policy mode or rejects it before RN adds
+any workaround.
 
 ## Run On iOS
 

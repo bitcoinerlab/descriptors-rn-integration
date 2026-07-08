@@ -7,7 +7,7 @@ import {
   getVersion,
   getXpub,
   keyExpression,
-  registerWalletPolicy,
+  registerPolicy,
   signMessage,
   signers,
   type Session,
@@ -40,6 +40,7 @@ const TIMELOCK_RELATIVE_BLOCKS = 5;
 const FAKE_UTXO_VALUE = 100_000n;
 const FAKE_SEND_VALUE = 90_000n;
 const MULTISIG_POLICY_NAME = "RN integration multisig";
+const ORDERED_MULTISIG_POLICY_NAME = "RN integration ordered multi";
 const TIMELOCK_POLICY_NAME = "RN integration timelock";
 const MESSAGE_TEXT = "BitBox React Native integration message";
 const EMPTY_STORE_JSON = "{}";
@@ -152,6 +153,15 @@ async function multisigDescriptor(session: Session): Promise<string> {
   return `wsh(sortedmulti(1,${[bitboxKey, ...otherMultisigKeys()].join(",")}))`;
 }
 
+async function orderedMultisigDescriptor(session: Session): Promise<string> {
+  const bitboxKey = await keyExpression({
+    session,
+    originPath: MULTISIG_ORIGIN,
+    keyPath: MULTISIG_KEY_PATH,
+  });
+  return `wsh(multi(1,${[bitboxKey, otherMultisigKeys()[0]].join(",")}))`;
+}
+
 async function timelockDescriptor(session: Session): Promise<string> {
   const bitboxKey = await keyExpression({
     session,
@@ -163,13 +173,24 @@ async function timelockDescriptor(session: Session): Promise<string> {
 
 async function generateFakeP2wpkhPsbt(session: Session): Promise<string> {
   const descriptor = await p2wpkhDescriptor(session);
+  return generateFakePsbt({ session, fundingDescriptor: descriptor });
+}
+
+async function generateFakePsbt({
+  session,
+  fundingDescriptor,
+}: {
+  session: Session;
+  fundingDescriptor: string;
+}): Promise<string> {
+  const destinationDescriptor = await p2wpkhDescriptor(session);
   const fundingOutput = new Output({
-    descriptor,
+    descriptor: fundingDescriptor,
     index: 0,
     network: BITCOIN_NETWORK,
   });
   const destinationOutput = new Output({
-    descriptor,
+    descriptor: destinationDescriptor,
     index: 1,
     network: BITCOIN_NETWORK,
   });
@@ -264,13 +285,13 @@ export default function App() {
         const descriptor = await multisigDescriptor(session);
         add(`Multisig descriptor OK: ${summarizeValue(descriptor)}`);
 
-        add("Registering multisig wallet policy. Confirm on the BitBox if prompted.");
-        await registerWalletPolicy({
+        add("Registering multisig policy. Confirm on the BitBox if prompted.");
+        await registerPolicy({
           descriptor,
           session,
           name: MULTISIG_POLICY_NAME,
         });
-        add("registerWalletPolicy OK.");
+        add("registerPolicy multisig OK.");
 
         add("Displaying registered multisig receive address on the BitBox...");
         const address = await displayAddress({
@@ -287,6 +308,54 @@ export default function App() {
     );
   }
 
+  function runOrderedMultisigRegistrationTest() {
+    void runWithSession(
+      "Running descriptors ordered wsh(multi(...)) registration test...",
+      async (session) => {
+        add("Building 1-of-2 ordered multisig descriptor through keyExpression...");
+        const descriptor = await orderedMultisigDescriptor(session);
+        add(`Ordered multi descriptor OK: ${summarizeValue(descriptor)}`);
+
+        add(
+          "Registering ordered multi policy. Confirm on the BitBox if prompted.",
+        );
+        await registerPolicy({
+          descriptor,
+          session,
+          name: ORDERED_MULTISIG_POLICY_NAME,
+        });
+        add("registerPolicy ordered multi OK.");
+
+        add("Displaying registered ordered multi receive address on the BitBox...");
+        const address = await displayAddress({
+          descriptor,
+          session,
+          index: 0,
+        });
+        add(
+          typeof address === "string"
+            ? `Ordered multi address OK: ${summarizeValue(address)}`
+            : "Ordered multi display call OK.",
+        );
+
+        add("Generating fake ordered multi PSBT...");
+        const orderedMultiPsbt = await generateFakePsbt({
+          session,
+          fundingDescriptor: descriptor,
+        });
+        add(`Ordered multi fake PSBT OK: ${summarizeValue(orderedMultiPsbt)}`);
+
+        add("Signing ordered multi fake PSBT. Confirm on the BitBox if prompted.");
+        const signedPsbt = await signers.sign({
+          psbt: Psbt.fromBase64(orderedMultiPsbt, { network: BITCOIN_NETWORK }),
+          session,
+        });
+        setPsbt(signedPsbt);
+        add(`Ordered multi signed PSBT OK: ${summarizeValue(signedPsbt)}`);
+      },
+    );
+  }
+
   function runTimelockPolicyRegistrationTest() {
     void runWithSession(
       "Running descriptors single-key timelock policy registration test...",
@@ -295,13 +364,13 @@ export default function App() {
         const descriptor = await timelockDescriptor(session);
         add(`Timelock descriptor OK: ${summarizeValue(descriptor)}`);
 
-        add("Registering timelock wallet policy. Confirm on the BitBox if prompted.");
-        await registerWalletPolicy({
+        add("Registering timelock policy. Confirm on the BitBox if prompted.");
+        await registerPolicy({
           descriptor,
           session,
           name: TIMELOCK_POLICY_NAME,
         });
-        add("registerWalletPolicy timelock OK.");
+        add("registerPolicy timelock OK.");
 
         add("Displaying registered timelock receive address on the BitBox...");
         const address = await displayAddress({
@@ -479,6 +548,11 @@ export default function App() {
             <Button
               title="Register Multisig"
               onPress={runRegistrationTest}
+              disabled={running}
+            />
+            <Button
+              title="Register Ordered Multi"
+              onPress={runOrderedMultisigRegistrationTest}
               disabled={running}
             />
             <Button
