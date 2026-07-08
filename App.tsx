@@ -468,7 +468,6 @@ export default function App() {
       session = connectors.fromClient({
         client,
         network: BITCOIN_NETWORK,
-        Output,
         store,
       });
       await run(session, client);

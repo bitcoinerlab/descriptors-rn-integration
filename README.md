@@ -73,9 +73,9 @@ descriptors preset loads `ecpair`, which expects `Buffer` during startup, so
 ## Descriptors Store
 
 The app owns a plain JSON descriptors `Store`. The Store is shown in the UI as
-editable JSON, passed into `connectors.fromClient({ client, Output, network,
-store })`, and written back from `session.store` after each run. Persist the
-Store JSON, not the session.
+editable JSON, passed into `connectors.fromClient({ client, network, store })`,
+and written back from `session.store` after each run. Persist the Store JSON,
+not the session.
 
 The `Register Timelock` button registers and displays a single-key
 `wsh(and_v(v:pk(...),older(5)))` policy. Use it with `Register Multisig` to tell
