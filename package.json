@@ -1,7 +1,7 @@
 {
   "name": "descriptors-rn-integration",
   "version": "1.0.0",
-  "description": "React Native integration harness for @bitcoinerlab/descriptors hardware-wallet connectors.",
+  "description": "React Native integration harness for @bitcoinerlab/descriptors hardware-wallet APIs.",
   "main": "index.ts",
   "dependencies": {
     "@bitcoinerlab/bitbox-react-native": "file:../bitbox-react-native/bitcoinerlab-bitbox-react-native-0.1.0.tgz",

@@ -534,12 +534,12 @@ export default function App() {
             ...current,
             [activeProvider]: JSON.stringify(nextStore, null, 2),
           }));
-          add(`Persisted the ${activeProvider} store separately.`);
+          add(`Updated the in-memory ${activeProvider} store separately.`);
         }
         if (ownsConnection) {
           try {
             await activeConnection.session.close();
-            add("Disconnected and released transport resources.");
+            add("Disconnected and released hardware-wallet resources.");
           } catch (error) {
             add(`CLEANUP ERROR: ${errorMessage(error)}`);
           }
