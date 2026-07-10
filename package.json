@@ -1,18 +1,22 @@
 {
-  "name": "bitbox-rn-integration",
+  "name": "descriptors-rn-integration",
   "version": "1.0.0",
+  "description": "React Native integration harness for @bitcoinerlab/descriptors hardware-wallet connectors.",
   "main": "index.ts",
   "dependencies": {
     "@bitcoinerlab/bitbox-react-native": "file:../bitbox-react-native/bitcoinerlab-bitbox-react-native-0.1.0.tgz",
     "@bitcoinerlab/descriptors": "file:../descriptors/packages/descriptors/bitcoinerlab-descriptors-3.1.7.tgz",
     "@bitcoinerlab/descriptors-core": "file:../descriptors/bitcoinerlab-descriptors-core-3.1.7.tgz",
+    "@ledgerhq/ledger-bitcoin": "0.3.1",
+    "@ledgerhq/react-native-hid": "6.39.5",
+    "@ledgerhq/react-native-hw-transport-ble": "6.41.0",
     "buffer": "^6.0.3",
     "expo": "~54.0.0",
     "expo-dev-client": "~6.0.21",
     "expo-modules-core": "~3.0.30",
-    "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
-    "react-native": "0.81.5"
+    "react-native": "0.81.5",
+    "react-native-ble-plx": "3.4.0"
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
@@ -22,8 +26,10 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "typecheck": "tsc --noEmit",
+    "test:bundle:ios": "expo export --platform ios --output-dir dist/metro-ios",
+    "test:bundle:android": "expo export --platform android --output-dir dist/metro-android",
+    "test:bundle": "npm run test:bundle:ios && npm run test:bundle:android"
   },
-  "private": true,
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  "private": true
 }

@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "bitbox-rn-integration",
-    "slug": "bitbox-rn-integration",
+    "name": "Descriptors RN Integration",
+    "slug": "descriptors-rn-integration",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -20,12 +20,16 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.bitcoinerlab.bitboxintegration"
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
     "plugins": [
       "expo-dev-client",
-      "./node_modules/@bitcoinerlab/bitbox-react-native/app.plugin.js"
+      "@bitcoinerlab/bitbox-react-native/app.plugin",
+      [
+        "react-native-ble-plx",
+        {
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to hardware wallets over Bluetooth.",
+          "neverForLocation": true
+        }
+      ]
     ]
   }
 }
