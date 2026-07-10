@@ -61,7 +61,7 @@
   not native linking or hardware communication.
 - After dependency/plugin changes run `npx expo prebuild --clean`, inspect both
   generated projects, and rebuild development clients. Real integration follows
-  the provider/platform matrix in `README.md`; do not mark a row validated until
-  its complete physical workflow has passed.
+  the supported paths and physical validation checklist in `README.md`; do not
+  record a path as validated until its complete workflow has passed.
 - Keep host-specific device IDs, IPs, ports, and workaround logs under `.local/`
   or `LOCAL_*.md`; both are intentionally ignored.

@@ -1,159 +1,155 @@
-# Descriptors RN Integration
+# Descriptors React Native Integration
 
-Compact Expo development-client harness for React Native hardware-wallet support
-provided by `@bitcoinerlab/descriptors`. The app runs one descriptor workflow
-through small BitBox and Ledger branches rather than maintaining separate
-device-specific test panels.
+Expo development-client app for testing the React Native hardware-wallet APIs in
+`@bitcoinerlab/descriptors` on physical iOS and Android devices.
 
-## Shared Workflow
+The app runs the same descriptor, address, policy, PSBT, and message-signing
+workflows against BitBox and Ledger. It is an integration harness, not a wallet:
+it does not hold funds or broadcast transactions. Descriptor stores, PSBTs, and
+logs remain in memory; native modules may retain their own pairing state.
 
-Every hardware-wallet action uses the selected provider, transport, and
-descriptor scenario. The complete workflow:
+## What The App Tests
 
-1. Connects one hardware wallet.
-2. Reads the device/app version and a live master fingerprint.
-3. Builds the selected key expression and descriptor.
-4. Registers or checks a non-standard policy when required.
-5. Derives an address locally and displays it on the device.
-6. Generates the same fake, no-funds PSBT.
-7. Signs the PSBT for every current scenario.
-8. Signs a message for standard `wpkh` scenarios.
-9. Copies `session.store` into that provider's in-memory JSON field and closes
-   the owned session.
+For the selected wallet, transport, and descriptor scenario, the app can:
 
-BitBox and Ledger stores are separate because their policy metadata is not
-interchangeable. The harness does not persist them across app restarts. Each
-descriptors `connect(...)` call binds the live fingerprint before returning and
-closes the new connection if it does not match the selected store.
+- Connect and read the device or Bitcoin app version.
+- Read the live master fingerprint.
+- Derive an xpub-backed descriptor key expression.
+- Build standard, multisig, and Miniscript descriptors.
+- Register or check hardware-wallet policies.
+- Derive an address locally and confirm it on the device.
+- Generate and sign a fake PSBT backed by a synthetic, no-funds transaction.
+- Sign legacy Bitcoin messages for standard `wpkh` scenarios.
+- Close the owned hardware connection after every connected action.
 
-Shared scenarios cover:
+The selectable descriptor scenarios are:
 
-- Ranged fixed-branch `wpkh(KEY/0/*)`, passing `index` only.
-- Fixed `wpkh(KEY/0/7)`, passing neither `change` nor `index`.
-- Native `wsh(sortedmulti(...))` policy coverage.
-- Generic ordered `wsh(multi(...))` policy coverage.
-- Relative-timelock `wsh(and_v(v:pk(...),older(5)))` Miniscript coverage.
+- Ranged `wpkh(KEY/0/*)`.
+- Fixed `wpkh(KEY/0/7)`.
+- Native `wsh(sortedmulti(...))`.
+- Ordered `wsh(multi(...))`.
+- Relative-timelock `wsh(and_v(v:pk(...),older(5)))`.
 
-Absent descriptor positions are omitted from calls; they are never passed as
-explicit `undefined`. Multipath descriptors such as `KEY/**` would require both
-`change` and `index`, but are not currently a selectable scenario.
+The app uses Bitcoin mainnet derivation paths and `networks.bitcoin`. The fake
+PSBT contains no real UTXO and is not intended for broadcast.
 
-## Provider Matrix
+## Supported Device Paths
 
-| Provider | Transport | iOS app path | Android app path | Injected runtime package(s) |
-| --- | --- | --- | --- | --- |
-| BitBox | Nova BLE | Exposed | Exposed | `@bitcoinerlab/bitbox-react-native` via `driver.module`, with `mode: "ble"` |
-| BitBox | USB | Hidden | Exposed | `@bitcoinerlab/bitbox-react-native` via `driver.module`, with `mode: "usb"` |
-| Ledger | BLE | Exposed | Exposed | `@ledgerhq/react-native-hw-transport-ble` via `driver.transport`, plus `@ledgerhq/ledger-bitcoin` |
-| Ledger | HID/USB | Hidden | Exposed | `@ledgerhq/react-native-hid` via `driver.transport`, plus `@ledgerhq/ledger-bitcoin` |
+On iOS, the app exposes:
 
-`Exposed` and `Hidden` describe this harness's transport selector, not upstream
-platform support or completed physical validation. In the app, a provider is the
-selected wallet family. `@bitcoinerlab/descriptors/bitbox` and
-`@bitcoinerlab/descriptors/ledger` are descriptors device entrypoints, while the
-packages in the last column are runtime implementations passed into their direct
-`connect(...)` APIs.
+- BitBox Nova over BLE.
+- Ledger over BLE.
 
-The earlier BitBox-focused app was physically exercised with BitBox Nova BLE on
-iOS. Current `@bitcoinerlab/bitbox-react-native` documentation records physical
-Android BLE and USB validation, although this generalized harness has not yet
-rerun that matrix. Ledger support in this harness is not labeled real-device
-validated until the manual matrix below is completed.
+On Android, the app exposes:
 
-## Injected Drivers
+- BitBox Nova over BLE or USB.
+- Ledger over BLE or USB/HID.
 
-The `driver` property is dependency injection, not the removed public
-`connectors` namespace. Literal imports keep every selected native dependency
-visible to Metro:
+These are the paths available in the app. A path is considered validated only
+after its complete workflow has passed on a physical device.
+
+No path currently has a complete validation recorded in this README.
+
+Expo Go cannot load the required native modules. Use an Expo development client.
+
+## How Connections Work
+
+Descriptors exposes separate BitBox and Ledger entrypoints:
 
 ```ts
-bitbox.connect({
+import * as bitbox from "@bitcoinerlab/descriptors/bitbox";
+import * as ledger from "@bitcoinerlab/descriptors/ledger";
+```
+
+These entrypoints provide the descriptor operations for each wallet family. The
+`driver` argument tells an entrypoint which runtime modules it should use to open
+the hardware. Literal imports let Metro resolve the exact modules used by these
+branches.
+
+BitBox receives one module that exposes its React Native BLE and USB connection
+functions. `mode` chooses which function to call:
+
+```ts
+const session = await bitbox.connect({
   driver: {
     module: import("@bitcoinerlab/bitbox-react-native"),
     mode: "ble"
   },
-  network,
+  network: networks.bitcoin,
   store: bitboxStore
 });
+```
 
-ledger.connect({
+Ledger receives two modules: a transport module for opening the device and the
+Ledger Bitcoin API for wallet policies and commands:
+
+```ts
+const session = await ledger.connect({
   driver: {
     transport: import("@ledgerhq/react-native-hw-transport-ble"),
     bitcoinApi: import("@ledgerhq/ledger-bitcoin"),
     app: { name: "Bitcoin", minVersion: "2.1.0" }
   },
-  network,
+  network: networks.bitcoin,
   store: ledgerStore
 });
 ```
 
-For BitBox, `@bitcoinerlab/bitbox-react-native` is the injected provider module.
-Descriptors calls its BLE or USB connection function according to `driver.mode`
-and owns the returned client. For Ledger, descriptors receives a transport module
-and the vendor Bitcoin API separately; it opens the transport and constructs the
-`AppClient`. The application does neither itself.
+For Android Ledger USB/HID, the transport is instead:
 
-Normal connections omit `driver.device` and timeouts. Ledger therefore calls the
-transport's `create()` behavior. BitBox calls the selected provider function
-without a device id. Both paths select the first matching device according to the
-injected package. Every Ledger connection also requires the unlocked device to
-have the mainnet `Bitcoin` app open at version `2.1.0` or newer. Returned sessions
-own their client or transport and are closed with `session.close()`.
-
-## Dependencies And Expo
-
-Use Node.js 20.19.4 or newer.
-
-Ledger dependencies are pinned to a compatible set:
-
-- `@ledgerhq/ledger-bitcoin@0.3.1`
-- `@ledgerhq/react-native-hid@6.39.5`
-- `@ledgerhq/react-native-hw-transport-ble@6.41.0`
-- `react-native-ble-plx@3.4.0`
-
-Ledger BLE `6.41.0` has an exact normal dependency on
-`react-native-ble-plx@3.4.0`. The app pins that same version so npm deduplicates
-to one native copy. Verify with:
-
-```sh
-npm ls @ledgerhq/react-native-hw-transport-ble react-native-ble-plx --all
+```ts
+import("@ledgerhq/react-native-hid")
 ```
 
-`app.json` keeps `expo-dev-client`, loads the BitBox plugin through
-`@bitcoinerlab/bitbox-react-native/app.plugin`, and configures the
-`react-native-ble-plx` plugin with hardware-wallet-neutral permission wording.
-Expo Go cannot load these native modules.
+The app omits `driver.device`. Ledger uses its transport's `create()` behavior;
+BitBox asks its provider to connect without a device id. Each selects the first
+matching device it finds.
 
-`index.ts` must import `./polyfills` first. Hermes does not provide Node's global
-`Buffer`, while descriptors and Ledger dependencies require it during module
-startup.
+Every returned session owns its connection. The app always releases it with:
 
-The existing iOS bundle identifier and Android application id remain
-`com.bitcoinerlab.bitboxintegration`. This intentionally preserves the installed
-app identity and app-private BitBox pairing state while the repository and
-display identity become `descriptors-rn-integration`. A future identifier change
-would install a different app.
+```ts
+await session.close();
+```
 
-## Local Tarballs
+Both connection paths read the live master fingerprint before returning. If an
+existing store belongs to another wallet, connection fails and the new resource
+is closed.
 
-The three `@bitcoinerlab/*` dependencies resolve from sibling tarballs. This app
-must not silently test stale generated code merely because a tarball has the same
-version.
+## Stores
 
-After BitBox provider changes:
+BitBox and Ledger stores are separate JSON objects because their cached policy
+metadata is different. The app copies `session.store` back into the selected
+wallet's JSON field after each connected action.
+
+Stores are held only in React state and are lost when the app restarts. You can
+copy the JSON elsewhere when testing reconnection or fingerprint binding. Never
+persist a live session.
+
+## Requirements
+
+- Node.js 20.19.4 or newer.
+- npm.
+- Xcode and CocoaPods for iOS builds.
+- Android Studio and the Android SDK for Android builds.
+- A physical BitBox Nova or Ledger device.
+- The sibling `descriptors` and `bitbox-react-native` repositories while the
+  dependencies remain local tarballs.
+
+Ledger tests require an unlocked device with the mainnet `Bitcoin` app open at
+version `2.1.0` or newer.
+
+## Install Local Packages
+
+Build and pack the current sibling sources:
 
 ```sh
 (cd ../bitbox-react-native && npm run build:src && npm pack)
-```
-
-After descriptors changes, build and pack in this order:
-
-```sh
 (cd ../descriptors && npm run build:src && npm run build:packages && npm pack)
 (cd ../descriptors/packages/descriptors && npm pack)
 ```
 
-Then explicitly refresh the app when filenames retain the same version:
+Install all three tarballs explicitly. `--force` is needed when a tarball keeps
+the same package version but its contents have changed:
 
 ```sh
 npm install --save --force \
@@ -162,74 +158,79 @@ npm install --save --force \
   ../descriptors/bitcoinerlab-descriptors-core-3.1.7.tgz
 ```
 
-Verify the installed declarations contain Ledger `driver.transport` and
-`driver.bitcoinApi`, BitBox `driver.module`, and owned `session.close()`. Also
-verify `package-lock.json` has all three refreshed tarball integrities. A bumped
-package version or filename is safer than same-version replacement because npm
-otherwise reports stale packages as up to date.
+`npm pack` does not run `prepublishOnly`, so the explicit build commands above
+are required before creating local tarballs.
 
-`npm pack` does not run `prepublishOnly`, so these explicit builds are required
-for local integration artifacts. Before publishing the libraries, use their full
-release lifecycle from clean generated output so removed files and stale package
-documentation cannot enter the release tarballs.
+This repository uses npm and tracks `package-lock.json`.
 
-This repository uses npm and tracks `package-lock.json`. Do not add a Yarn
-lockfile.
-
-## Build Checks
-
-Install and run the static checks:
+Keep `react-native-ble-plx` at `3.4.0`. Ledger BLE `6.41.0` depends on that exact
+version, and both must resolve to one native installation:
 
 ```sh
-npm install
+npm ls @ledgerhq/react-native-hw-transport-ble react-native-ble-plx --all
+```
+
+## Verify The JavaScript Build
+
+```sh
 npm run typecheck
 npm run test:bundle:ios
 npm run test:bundle:android
 ```
 
-`expo export` proves Metro can resolve the literal driver imports and construct
-each JavaScript dependency graph. It does not prove autolinking, native-module
-availability, Bluetooth/USB communication, or hardware behavior.
+The Expo export and Metro bundle checks verify that all literal imports resolve
+for each platform. They do not test native linking, permissions, Bluetooth, USB,
+or hardware communication.
 
-After dependency or config-plugin changes, regenerate and inspect both native
+## Build A Development Client
+
+After changing native dependencies or Expo config plugins, regenerate the native
 projects:
 
 ```sh
 npx expo prebuild --clean
 ```
 
-For the physical-device matrix, rebuild and launch development clients on the
-selected devices:
+Build and launch on a physical device:
 
 ```sh
 npx expo run:ios --device
 npx expo run:android --device
 ```
 
-## Manual Real-Device Matrix
+Tracked native configuration lives in `app.json`. The generated `ios/` and
+`android/` directories are ignored and should not be edited manually.
 
-Run permission handling, transport open, Bitcoin app APDU exchange, version,
-fingerprint, key expression, address display, registration, message signing where
-supported, fake PSBT signing, and disconnect cleanup for:
+## Using The App
 
-- BitBox Nova BLE on iOS.
-- BitBox Nova BLE on Android.
-- BitBox USB on Android.
-- Ledger BLE through descriptors on iOS.
-- Ledger BLE through descriptors on Android.
-- Ledger HID/USB through descriptors on Android.
+1. Select BitBox or Ledger.
+2. Select a transport available on the current platform.
+3. Select a descriptor scenario.
+4. Leave the provider store as `{}` for a new test, or paste a previous store.
+5. Run an individual action or **Run Full Workflow**.
+6. Allow any Bluetooth or USB permission prompts from the operating system.
+7. Confirm address, policy, and signing prompts on the hardware wallet.
+8. Inspect or share the on-screen log.
 
-Display, registration, PSBT signing, and message signing require confirmation on
-the hardware wallet. Do not mark a row validated until these actions have run on
-the physical device and cleanup has been observed.
+The individual actions make it easier to isolate failures in connection,
+derivation, policy registration, address display, PSBT signing, or message
+signing. **Run Full Workflow** exercises the complete scenario through one owned
+session.
 
-## Generated Native Projects
+## Physical Validation
 
-`ios/` and `android/` are generated and ignored. Do not manually edit them.
-Change `app.json`, dependencies, or package config plugins, then run
-`npx expo prebuild --clean`. Keep host-specific device ids, IPs, ports, and run
-logs under `.local/` or `LOCAL_*.md`; both are ignored.
+For each supported device path, verify:
 
-The parent directory can later be renamed by moving this complete repository,
-including `.git`. Renaming is not part of app generation and does not require
-reinitializing Git or rewriting history.
+- Runtime permission handling.
+- Connection and cleanup.
+- Version and fingerprint reads.
+- Key-expression and descriptor construction.
+- Address confirmation on the hardware wallet.
+- Policy registration for non-standard descriptors.
+- Fake PSBT signing.
+- Message signing where the scenario supports it.
+- Store reuse and fingerprint-mismatch rejection.
+
+Record a path as validated only after every applicable step succeeds on the
+physical device. Complete path validation covers all five scenarios; message
+signing applies only to the two `wpkh` scenarios.
