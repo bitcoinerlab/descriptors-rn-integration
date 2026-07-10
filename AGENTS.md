@@ -20,9 +20,10 @@
   here and verify `package-lock.json` resolves all three packages from
   `file:../...` tarballs.
 - Same-version tarballs can remain stale in npm's cache and lock integrity. After
-  refresh, inspect installed declarations for `driver.module`, owned
-  `session.close()`, and fingerprint binding. Use the explicit three-tarball `npm
-  install --save --force ...` command in `README.md` when necessary.
+  refresh, inspect installed declarations for Ledger `driver.transport` and
+  `driver.bitcoinApi`, BitBox `driver.module`, owned `session.close()`, and
+  fingerprint binding. Use the explicit three-tarball `npm install --save
+  --force ...` command in `README.md` when necessary.
 - Use npm and preserve `package-lock.json`; do not add a Yarn lockfile.
 - Keep `react-native-ble-plx` exactly `3.4.0`: Ledger BLE `6.41.0` depends on
   that exact version, and multiple native copies are unsafe.
@@ -37,10 +38,11 @@
   `@bitcoinerlab/bitbox-react-native/app.plugin` subpath, never a direct
   `node_modules` path.
 - Keep BitBox and Ledger stores separate. Persist `session.store`, not a session;
-  owned connectors bind the live fingerprint before returning.
-- Pass literal driver import promises to descriptors `connectors.connect(...)`.
-  Do not open transports, construct `AppClient`, or use `fromClient` for the
-  normal RN path. Omit `driver.device` so drivers select the first device.
+  owned connections bind the live fingerprint before returning.
+- Pass literal driver import promises to each provider's `connect(...)`: Ledger
+  receives `driver.transport` and `driver.bitcoinApi`, while BitBox receives
+  `driver.module`. Do not open transports or construct `AppClient` for the normal
+  RN path. Omit `driver.device` so drivers select the first device.
 - Close every owned connection with idempotent `session.close()`.
 - Preserve the existing native bundle/application identifiers unless explicitly
   asked to change them; replacing them loses the installed app identity and may

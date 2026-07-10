@@ -21,8 +21,8 @@ scenario. The complete workflow:
 9. Persists only that provider's JSON store and closes the transport.
 
 BitBox and Ledger stores are separate because their policy metadata is not
-interchangeable. Each descriptors connector binds the live fingerprint before
-returning and closes the connection if it does not match the selected store.
+interchangeable. Each descriptors connection binds the live fingerprint before
+returning and closes if it does not match the selected store.
 
 Shared scenarios cover:
 
@@ -53,13 +53,14 @@ validated until the manual matrix below is completed.
 
 ## Injected Drivers
 
-The app gives descriptors a literal import promise for the selected native
+The app gives descriptors literal import promises for the selected native
 driver. It does not open transports or construct Ledger `AppClient` itself:
 
 ```ts
-ledger.connectors.connect({
+ledger.connect({
   driver: {
-    module: import("@ledgerhq/react-native-hw-transport-ble"),
+    transport: import("@ledgerhq/react-native-hw-transport-ble"),
+    bitcoinApi: import("@ledgerhq/ledger-bitcoin"),
     app: { name: "Bitcoin", minVersion: "2.1.0" }
   },
   network,
@@ -68,8 +69,9 @@ ledger.connectors.connect({
 ```
 
 Normal connections omit `driver.device` and transport timeouts. Descriptors uses
-the driver's default `create()` behavior, which discovers and opens the first
-device. BitBox requires only `driver.mode` because its RN module exposes both BLE
+the transport's default `create()` behavior, which discovers and opens the first
+device. Ledger receives separate transport and Bitcoin API modules. BitBox uses
+`driver.module` and requires `driver.mode` because its RN module exposes both BLE
 and USB. Returned sessions own their resources and are closed with
 `session.close()`.
 
@@ -133,10 +135,11 @@ npm install --save --force \
   ../descriptors/bitcoinerlab-descriptors-core-3.1.7.tgz
 ```
 
-Verify the installed declarations contain `driver.module` and owned
-`session.close()`. Also verify `package-lock.json` has all three refreshed tarball
-integrities. A bumped package version or filename is safer than same-version
-replacement because npm otherwise reports stale packages as up to date.
+Verify the installed declarations contain Ledger `driver.transport` and
+`driver.bitcoinApi`, BitBox `driver.module`, and owned `session.close()`. Also
+verify `package-lock.json` has all three refreshed tarball integrities. A bumped
+package version or filename is safer than same-version replacement because npm
+otherwise reports stale packages as up to date.
 
 This repository uses npm and tracks `package-lock.json`. Do not add a Yarn
 lockfile.

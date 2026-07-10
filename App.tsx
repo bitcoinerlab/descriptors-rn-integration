@@ -34,11 +34,11 @@ type Transport = "ble" | "usb";
 type HardwareConnection =
   | {
       provider: "bitbox";
-      session: Awaited<ReturnType<typeof bitbox.connectors.connect>>;
+      session: bitbox.Session;
     }
   | {
       provider: "ledger";
-      session: Awaited<ReturnType<typeof ledger.connectors.connect>>;
+      session: ledger.Session;
     };
 
 type Position = { change?: number; index?: number };
@@ -132,7 +132,7 @@ async function connectHardwareWallet({
   if (provider === "bitbox") {
     return {
       provider: "bitbox",
-      session: await bitbox.connectors.connect({
+      session: await bitbox.connect({
         driver: {
           module: import("@bitcoinerlab/bitbox-react-native"),
           mode: transport,
@@ -163,17 +163,19 @@ async function connectHardwareWallet({
 
   const session =
     transport === "ble"
-      ? await ledger.connectors.connect({
+      ? await ledger.connect({
           driver: {
-            module: import("@ledgerhq/react-native-hw-transport-ble"),
+            transport: import("@ledgerhq/react-native-hw-transport-ble"),
+            bitcoinApi: import("@ledgerhq/ledger-bitcoin"),
             app: { name: "Bitcoin", minVersion: "2.1.0" },
           },
           network: BITCOIN_NETWORK,
           store: store as ledger.Store,
         })
-      : await ledger.connectors.connect({
+      : await ledger.connect({
           driver: {
-            module: import("@ledgerhq/react-native-hid"),
+            transport: import("@ledgerhq/react-native-hid"),
+            bitcoinApi: import("@ledgerhq/ledger-bitcoin"),
             app: { name: "Bitcoin", minVersion: "2.1.0" },
           },
           network: BITCOIN_NETWORK,
@@ -228,7 +230,7 @@ function hardwareDisplayAddress(
   connection: HardwareConnection,
   descriptor: string,
   position: Position,
-): Promise<string | void> {
+): Promise<string> {
   return connection.provider === "bitbox"
     ? bitbox.displayAddress({
         session: connection.session,
@@ -601,7 +603,7 @@ export default function App() {
         descriptor,
         scenario.position,
       );
-      add(`Displayed address: ${address ?? "device confirmed"}`);
+      add(`Displayed address: ${address}`);
     });
   }
 
@@ -686,7 +688,7 @@ export default function App() {
         descriptor,
         scenario.position,
       );
-      add(`Displayed address: ${address ?? "device confirmed"}`);
+      add(`Displayed address: ${address}`);
       const generated = await generateFakePsbt(
         hardware,
         descriptor,
