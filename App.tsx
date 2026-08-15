@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BIP32,
+  ECPair,
+  keyExpressionBIP32,
   Output,
   Psbt,
   networks,
+  signers as softwareSigners,
 } from "@bitcoinerlab/descriptors";
 import * as bitbox from "@bitcoinerlab/descriptors/bitbox";
 import * as ledger from "@bitcoinerlab/descriptors/ledger";
+import * as bitboxDriverModule from "@bitcoinerlab/bitbox-react-native";
 import {
   Alert,
   Button,
@@ -28,9 +32,13 @@ const EMPTY_STORE_JSON = "{}";
 const MESSAGE_TEXT = "Descriptors React Native integration message";
 const FAKE_UTXO_VALUE = 100_000n;
 const FAKE_SEND_VALUE = 90_000n;
+const MIXED_SEND_VALUE = 285_000n;
 
 type ProviderId = "bitbox" | "ledger";
 type Transport = "ble" | "usb";
+type BitBoxDiscoveryDevice =
+  | bitboxDriverModule.BitBoxNovaBleDevice
+  | bitboxDriverModule.BitBoxUsbDevice;
 type HardwareConnection =
   | {
       provider: "bitbox";
@@ -55,6 +63,13 @@ type Scenario = {
 
 type LogLine = { id: number; text: string };
 type PsbtContext = { provider: ProviderId; scenario: ScenarioId };
+
+const BITBOX_PRODUCTS: readonly bitboxDriverModule.BitBoxProduct[] = [
+  "bitbox02-multi",
+  "bitbox02-btconly",
+  "bitbox02-plus-multi",
+  "bitbox02-plus-btconly",
+];
 
 const SCENARIOS: readonly Scenario[] = [
   {
@@ -120,45 +135,90 @@ function providerLabel(provider: ProviderId): string {
   return provider === "bitbox" ? "BitBox" : "Ledger";
 }
 
+function assertIntegration(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+async function requestAndroidBlePermissions(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  const permissions =
+    Number(Platform.Version) >= 31
+      ? [
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        ]
+      : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+  const result = await PermissionsAndroid.requestMultiple(permissions);
+  if (
+    permissions.some(
+      (permission) => result[permission] !== PermissionsAndroid.RESULTS.GRANTED,
+    )
+  ) {
+    throw new Error("Bluetooth permission was not granted.");
+  }
+}
+
+function connectedBitBoxMetadata(
+  session: bitbox.Session,
+): bitboxDriverModule.BitBoxReactNativeSession {
+  const metadata = (session.client as { session?: unknown }).session;
+  assertIntegration(
+    typeof metadata === "object" && metadata !== null,
+    "Connected BitBox client did not expose native session metadata.",
+  );
+  const value = metadata as Partial<bitboxDriverModule.BitBoxReactNativeSession>;
+  assertIntegration(
+    typeof value.id === "string" && value.id.length > 0,
+    "Connected BitBox session did not include a native session id.",
+  );
+  assertIntegration(
+    value.transport === "ble" || value.transport === "usb",
+    "Connected BitBox session returned an invalid transport.",
+  );
+  assertIntegration(
+    BITBOX_PRODUCTS.includes(value.product as bitboxDriverModule.BitBoxProduct),
+    `Connected BitBox session returned an invalid product: ${String(value.product)}`,
+  );
+  assertIntegration(
+    typeof value.version === "string" && value.version.length > 0,
+    "Connected BitBox session did not include a firmware version.",
+  );
+  if (value.transport === "ble") {
+    assertIntegration(
+      value.product === "bitbox02-plus-btconly" ||
+        value.product === "bitbox02-plus-multi",
+      `BitBox Nova BLE returned a non-Nova canonical product: ${value.product}`,
+    );
+  }
+  return value as bitboxDriverModule.BitBoxReactNativeSession;
+}
+
 async function connectHardwareWallet({
   provider,
   transport,
   store,
+  selectedBitBoxDevice,
 }: {
   provider: ProviderId;
   transport: Transport;
   store: object;
+  selectedBitBoxDevice?: BitBoxDiscoveryDevice;
 }): Promise<HardwareConnection> {
+  if (transport === "ble") await requestAndroidBlePermissions();
+
   if (provider === "bitbox") {
     return {
       provider: "bitbox",
       session: await bitbox.connect({
         driver: {
-          module: import("@bitcoinerlab/bitbox-react-native"),
+          module: bitboxDriverModule,
           mode: transport,
+          ...(selectedBitBoxDevice ? { device: selectedBitBoxDevice } : {}),
         },
         network: BITCOIN_NETWORK,
         store: store as bitbox.Store,
       }),
     };
-  }
-
-  if (Platform.OS === "android" && transport === "ble") {
-    const permissions =
-      Number(Platform.Version) >= 31
-        ? [
-            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-            PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          ]
-        : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
-    const result = await PermissionsAndroid.requestMultiple(permissions);
-    if (
-      permissions.some(
-        (permission) => result[permission] !== PermissionsAndroid.RESULTS.GRANTED,
-      )
-    ) {
-      throw new Error("Bluetooth permission was not granted.");
-    }
   }
 
   const session =
@@ -264,9 +324,10 @@ async function hardwareSignPsbt(
   psbt: Psbt,
 ): Promise<string> {
   if (connection.provider === "bitbox") {
-    return bitbox.signers.sign({ session: connection.session, psbt });
+    await bitbox.signers.sign({ session: connection.session, psbt });
+  } else {
+    await ledger.signers.sign({ session: connection.session, psbt });
   }
-  await ledger.signers.sign({ session: connection.session, psbt });
   return psbt.toBase64();
 }
 
@@ -334,11 +395,16 @@ function varIntHex(value: number): string {
   return `ff${littleEndianHex(value, 8)}`;
 }
 
-function fakeFundingTxHex(scriptPubKey: Uint8Array): string {
+function fakeFundingTxHex(scriptPubKey: Uint8Array, fundingTag = 0): string {
+  assertIntegration(
+    Number.isInteger(fundingTag) && fundingTag >= 0 && fundingTag <= 255,
+    `Invalid synthetic funding tag: ${fundingTag}`,
+  );
+  const previousHashByte = fundingTag.toString(16).padStart(2, "0");
   return [
     "02000000",
     "01",
-    "00".repeat(32),
+    previousHashByte.repeat(32),
     "ffffffff",
     "00",
     "ffffffff",
@@ -367,6 +433,144 @@ function outputForDescriptor(
     ...(position.change !== undefined ? { change: position.change } : {}),
     ...(position.index !== undefined ? { index: position.index } : {}),
   });
+}
+
+function psbtStructureSnapshot(psbt: Psbt): string {
+  const keyValues = (values?: readonly { key: Uint8Array; value: Uint8Array }[]) =>
+    values?.map(({ key, value }) => ({ key: bytesToHex(key), value: bytesToHex(value) }));
+  const derivations = (
+    values?: readonly {
+      masterFingerprint: Uint8Array;
+      pubkey: Uint8Array;
+      path: string;
+    }[],
+  ) =>
+    values?.map(({ masterFingerprint, pubkey, path }) => ({
+      masterFingerprint: bytesToHex(masterFingerprint),
+      pubkey: bytesToHex(pubkey),
+      path,
+    }));
+
+  return JSON.stringify({
+    version: psbt.version,
+    locktime: psbt.locktime,
+    globalXpub: psbt.data.globalMap.globalXpub?.map(
+      ({ extendedPubkey, masterFingerprint, path }) => ({
+        extendedPubkey: bytesToHex(extendedPubkey),
+        masterFingerprint: bytesToHex(masterFingerprint),
+        path,
+      }),
+    ),
+    globalUnknownKeyVals: keyValues(psbt.data.globalMap.unknownKeyVals),
+    txInputs: psbt.txInputs.map(({ hash, index, sequence }) => ({
+      hash: bytesToHex(hash),
+      index,
+      sequence,
+    })),
+    txOutputs: psbt.txOutputs.map(({ script, value }) => ({
+      script: bytesToHex(script),
+      value: value.toString(),
+    })),
+    inputs: psbt.data.inputs.map((input) => ({
+      nonWitnessUtxo: input.nonWitnessUtxo
+        ? bytesToHex(input.nonWitnessUtxo)
+        : undefined,
+      witnessUtxo: input.witnessUtxo
+        ? {
+            script: bytesToHex(input.witnessUtxo.script),
+            value: input.witnessUtxo.value.toString(),
+          }
+        : undefined,
+      bip32Derivation: derivations(input.bip32Derivation),
+      sighashType: input.sighashType,
+      porCommitment: input.porCommitment,
+      redeemScript: input.redeemScript ? bytesToHex(input.redeemScript) : undefined,
+      witnessScript: input.witnessScript
+        ? bytesToHex(input.witnessScript)
+        : undefined,
+      unknownKeyVals: keyValues(input.unknownKeyVals),
+    })),
+    outputs: psbt.data.outputs.map((output) => ({
+      bip32Derivation: derivations(output.bip32Derivation),
+      redeemScript: output.redeemScript
+        ? bytesToHex(output.redeemScript)
+        : undefined,
+      witnessScript: output.witnessScript
+        ? bytesToHex(output.witnessScript)
+        : undefined,
+      unknownKeyVals: keyValues(output.unknownKeyVals),
+    })),
+  });
+}
+
+function buildMixedOwnershipPsbt(
+  connection: HardwareConnection,
+  hardwareDescriptor: string,
+): {
+  psbt: Psbt;
+  foreignSignature: { pubkey: Uint8Array; signature: Uint8Array };
+} {
+  const foreignMaster = BIP32.fromSeed(
+    new Uint8Array(32).fill(42),
+    BITCOIN_NETWORK,
+  );
+  const connectedFingerprint = connection.session.store.masterFingerprint;
+  assertIntegration(
+    typeof connectedFingerprint === "string",
+    "Connected hardware-wallet store is missing its master fingerprint.",
+  );
+  const foreignFingerprint = bytesToHex(foreignMaster.fingerprint);
+  assertIntegration(
+    foreignFingerprint !== connectedFingerprint,
+    "Deterministic foreign wallet unexpectedly matches the connected wallet.",
+  );
+  const foreignKey = keyExpressionBIP32({
+    masterNode: foreignMaster,
+    originPath: "/84'/0'/1'",
+    keyPath: "/0/*",
+  });
+  const foreignDescriptor = `wpkh(${foreignKey})`;
+  assertIntegration(
+    !foreignDescriptor.includes(connectedFingerprint),
+    "Foreign descriptor contains the connected hardware-wallet fingerprint.",
+  );
+
+  const foreignOutput = outputForDescriptor(foreignDescriptor, { index: 0 });
+  const hardwareOutput0 = outputForDescriptor(hardwareDescriptor, { index: 0 });
+  const hardwareOutput1 = outputForDescriptor(hardwareDescriptor, { index: 1 });
+  const destinationOutput = outputForDescriptor(hardwareDescriptor, { index: 2 });
+  const psbt = new Psbt({ network: BITCOIN_NETWORK });
+
+  foreignOutput.updatePsbtAsInput({
+    psbt,
+    txHex: fakeFundingTxHex(foreignOutput.getScriptPubKey(), 1),
+    vout: 0,
+  });
+  hardwareOutput0.updatePsbtAsInput({
+    psbt,
+    txHex: fakeFundingTxHex(hardwareOutput0.getScriptPubKey(), 2),
+    vout: 0,
+  });
+  hardwareOutput1.updatePsbtAsInput({
+    psbt,
+    txHex: fakeFundingTxHex(hardwareOutput1.getScriptPubKey(), 3),
+    vout: 0,
+  });
+  destinationOutput.updatePsbtAsOutput({ psbt, value: MIXED_SEND_VALUE });
+
+  softwareSigners.signInputBIP32({ psbt, index: 0, node: foreignMaster });
+  const foreignSignatures = psbt.data.inputs[0]?.partialSig;
+  assertIntegration(
+    foreignSignatures?.length === 1,
+    "Software wallet did not add exactly one foreign input signature.",
+  );
+  return {
+    psbt,
+    foreignSignature: {
+      pubkey: new Uint8Array(foreignSignatures[0].pubkey),
+      signature: new Uint8Array(foreignSignatures[0].signature),
+    },
+  };
 }
 
 async function buildDescriptor(
@@ -424,6 +628,9 @@ export default function App() {
   const [provider, setProvider] = useState<ProviderId>("bitbox");
   const [transport, setTransport] = useState<Transport>("ble");
   const [scenarioId, setScenarioId] = useState<ScenarioId>("ranged");
+  const [bitboxDevices, setBitboxDevices] = useState<BitBoxDiscoveryDevice[]>([]);
+  const [selectedBitBoxDevice, setSelectedBitBoxDevice] =
+    useState<BitBoxDiscoveryDevice>();
   const [stores, setStores] = useState<Record<ProviderId, string>>({
     bitbox: EMPTY_STORE_JSON,
     ledger: EMPTY_STORE_JSON,
@@ -474,13 +681,74 @@ export default function App() {
   function selectProvider(nextProvider: ProviderId) {
     if (running || nextProvider === provider) return;
     clearPsbt();
+    setBitboxDevices([]);
+    setSelectedBitBoxDevice(undefined);
     setProvider(nextProvider);
   }
 
   function selectTransport(nextTransport: Transport) {
     if (running || nextTransport === transport) return;
     clearPsbt();
+    setBitboxDevices([]);
+    setSelectedBitBoxDevice(undefined);
     setTransport(nextTransport);
+  }
+
+  function selectBitBoxDevice(device?: BitBoxDiscoveryDevice) {
+    if (running) return;
+    clearPsbt();
+    setSelectedBitBoxDevice(device);
+  }
+
+  async function discoverBitBoxDevices() {
+    if (
+      busyRef.current ||
+      provider !== "bitbox" ||
+      !transports.includes(transport)
+    ) {
+      return;
+    }
+    busyRef.current = true;
+    setRunning(true);
+    resetLog();
+    clearPsbt();
+    setBitboxDevices([]);
+    setSelectedBitBoxDevice(undefined);
+    try {
+      add(`Discovering BitBox devices over ${transport.toUpperCase()}...`);
+      if (transport === "ble") await requestAndroidBlePermissions();
+      assertIntegration(
+        transport === "ble" || Platform.OS === "android",
+        "BitBox USB discovery is available only on Android.",
+      );
+      const devices =
+        transport === "ble"
+          ? await bitboxDriverModule.discoverBitBoxNovaBleDevices({
+              scanDurationMs: 5000,
+            })
+          : await bitboxDriverModule.listAttachedBitBoxUsbDevices();
+      if (!mountedRef.current) return;
+      setBitboxDevices(devices);
+      add(`Found ${devices.length} BitBox device${devices.length === 1 ? "" : "s"}.`);
+      for (const device of devices) {
+        add(
+          `${device.name ?? device.deviceId}${
+            device.transport === "ble" && device.rssi !== undefined
+              ? ` (RSSI ${device.rssi})`
+              : ""
+          }`,
+        );
+      }
+    } catch (error) {
+      add(`ERROR: ${errorMessage(error)}`);
+      Alert.alert(
+        `BitBox ${transport.toUpperCase()} discovery failed`,
+        hardwareErrorMessage(error, transport),
+      );
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setRunning(false);
+    }
   }
 
   async function runWithConnection(
@@ -494,16 +762,31 @@ export default function App() {
     resetLog();
     const activeProvider = provider;
     const activeTransport = transport;
+    const activeBitBoxDevice =
+      activeProvider === "bitbox" &&
+      selectedBitBoxDevice?.transport === activeTransport
+        ? selectedBitBoxDevice
+        : undefined;
     let activeConnection: HardwareConnection | undefined;
     try {
       add(title);
       add(`Platform: ${Platform.OS}; provider: ${providerLabel(activeProvider)}.`);
       add(`Transport: ${activeTransport.toUpperCase()}.`);
+      if (activeProvider === "bitbox") {
+        add(
+          `Device: ${
+            activeBitBoxDevice?.name ??
+            activeBitBoxDevice?.deviceId ??
+            "automatic / first matching"
+          }.`,
+        );
+      }
       const store = parseStoreJson(stores[activeProvider]);
       const openedConnection = await connectHardwareWallet({
         provider: activeProvider,
         transport: activeTransport,
         store,
+        selectedBitBoxDevice: activeBitBoxDevice,
       });
       if (
         !mountedRef.current ||
@@ -514,6 +797,16 @@ export default function App() {
       }
       activeConnection = openedConnection;
       activeConnectionRef.current = openedConnection;
+      if (activeConnection.provider === "bitbox") {
+        const metadata = connectedBitBoxMetadata(activeConnection.session);
+        assertIntegration(
+          metadata.transport === activeTransport,
+          `Connected BitBox transport ${metadata.transport} does not match ${activeTransport}.`,
+        );
+        add(
+          `BitBox native session: transport=${metadata.transport}; product=${metadata.product}; firmware=${metadata.version}.`,
+        );
+      }
       add(
         `Connected fingerprint: ${activeConnection.session.store.masterFingerprint}.`,
       );
@@ -670,6 +963,102 @@ export default function App() {
     });
   }
 
+  function runMixedOwnershipPsbt() {
+    if (scenario.id !== "ranged") {
+      resetLog();
+      add("Mixed-ownership signing is available only for the ranged wpkh scenario.");
+      return;
+    }
+    void runWithConnection(
+      "Running mixed-ownership PSBT-signing workflow...",
+      async (hardware) => {
+        const descriptor = await buildDescriptor(hardware, scenario);
+        const { psbt: mixedPsbt, foreignSignature } = buildMixedOwnershipPsbt(
+          hardware,
+          descriptor,
+        );
+        const inputCountBefore = mixedPsbt.inputCount;
+        const outputCountBefore = mixedPsbt.txOutputs.length;
+        const structureBefore = psbtStructureSnapshot(mixedPsbt);
+        const foreignBefore = mixedPsbt.data.inputs[0]?.partialSig?.length ?? 0;
+        add(`Foreign input signatures before hardware signing: ${foreignBefore}.`);
+        add(
+          `PSBT counts before hardware signing: inputs=${inputCountBefore}; outputs=${outputCountBefore}.`,
+        );
+
+        const signedBase64 = await hardwareSignPsbt(hardware, mixedPsbt);
+        const signed = Psbt.fromBase64(signedBase64, { network: BITCOIN_NETWORK });
+        const foreignAfter = signed.data.inputs[0]?.partialSig ?? [];
+        const hardwareInput1 = signed.data.inputs[1]?.partialSig ?? [];
+        const hardwareInput2 = signed.data.inputs[2]?.partialSig ?? [];
+
+        assertIntegration(
+          foreignAfter.length === 1,
+          `Foreign input signature count changed to ${foreignAfter.length}.`,
+        );
+        assertIntegration(
+          bytesToHex(foreignAfter[0].pubkey) === bytesToHex(foreignSignature.pubkey) &&
+            bytesToHex(foreignAfter[0].signature) ===
+              bytesToHex(foreignSignature.signature),
+          "The original foreign software signature changed.",
+        );
+        assertIntegration(
+          hardwareInput1.length === 1 && hardwareInput2.length === 1,
+          `Expected one signature on each hardware input; received ${hardwareInput1.length} and ${hardwareInput2.length}.`,
+        );
+        for (const inputIndex of [1, 2]) {
+          const input = signed.data.inputs[inputIndex];
+          const signature = input?.partialSig?.[0];
+          const ownedDerivation = input?.bip32Derivation?.find(
+            ({ masterFingerprint }) =>
+              bytesToHex(masterFingerprint) === hardware.session.store.masterFingerprint,
+          );
+          assertIntegration(
+            signature &&
+              ownedDerivation &&
+              bytesToHex(signature.pubkey) === bytesToHex(ownedDerivation.pubkey),
+            `Input ${inputIndex} signature does not match its hardware-wallet derivation.`,
+          );
+        }
+        assertIntegration(
+          signed.inputCount === inputCountBefore &&
+            signed.txOutputs.length === outputCountBefore,
+          "Mixed-ownership signing changed the input or output count.",
+        );
+        assertIntegration(
+          psbtStructureSnapshot(signed) === structureBefore,
+          "Mixed-ownership signing changed existing PSBT transaction or metadata fields.",
+        );
+        for (const inputIndex of [0, 1, 2]) {
+          assertIntegration(
+            signed.validateSignaturesOfInput(
+              inputIndex,
+              (pubkey, hash, signature) =>
+                ECPair.fromPublicKey(pubkey).verify(hash, signature),
+            ),
+            `Input ${inputIndex} contains an invalid signature.`,
+          );
+        }
+        assertIntegration(
+          signed.data.inputs.every(
+            ({ finalScriptSig, finalScriptWitness }) =>
+              finalScriptSig === undefined && finalScriptWitness === undefined,
+          ),
+          "Mixed-ownership PSBT was unexpectedly finalized.",
+        );
+        Psbt.fromBase64(signed.toBase64(), { network: BITCOIN_NETWORK });
+
+        add(`Foreign input signatures after hardware signing: ${foreignAfter.length}.`);
+        add(`Hardware-owned input 1 signatures: ${hardwareInput1.length}.`);
+        add(`Hardware-owned input 2 signatures: ${hardwareInput2.length}.`);
+        add(
+          `PSBT counts after hardware signing: inputs=${signed.inputCount}; outputs=${signed.txOutputs.length}.`,
+        );
+        add("Mixed-ownership signing passed.");
+      },
+    );
+  }
+
   function runFullWorkflow() {
     void runWithConnection("Running the complete shared workflow...", async (hardware) => {
       const descriptor = await readBasicsAndDescriptor(hardware);
@@ -741,8 +1130,8 @@ export default function App() {
           <Text style={styles.eyebrow}>Descriptors RN Integration</Text>
           <Text style={styles.title}>One workflow, multiple wallets</Text>
           <Text style={styles.description}>
-            Select a provider, connection, and shared descriptor scenario. Each
-            action connects to the first device found and always releases it.
+            Select a provider, connection, optional discovered BitBox device, and
+            shared descriptor scenario. Every action releases its connection.
           </Text>
 
           <Text style={styles.sectionLabel}>Provider</Text>
@@ -776,6 +1165,36 @@ export default function App() {
               />
             ))}
           </View>
+          {provider === "bitbox" ? (
+            <>
+              <Button
+                title="Discover BitBox Devices"
+                onPress={() => void discoverBitBoxDevices()}
+                disabled={actionDisabled}
+              />
+              <View style={styles.choiceColumn}>
+                <Choice
+                  label="Automatic / first matching device"
+                  selected={selectedBitBoxDevice === undefined}
+                  disabled={running}
+                  onPress={() => selectBitBoxDevice()}
+                />
+                {bitboxDevices.map((device) => (
+                  <Choice
+                    key={`${device.transport}:${device.deviceId}`}
+                    label={`${device.name ?? device.deviceId}${
+                      device.transport === "ble" && device.rssi !== undefined
+                        ? ` (RSSI ${device.rssi})`
+                        : ""
+                    }`}
+                    selected={selectedBitBoxDevice?.deviceId === device.deviceId}
+                    disabled={running}
+                    onPress={() => selectBitBoxDevice(device)}
+                  />
+                ))}
+              </View>
+            </>
+          ) : null}
           <Text style={styles.sectionLabel}>Shared Scenario</Text>
           <View style={styles.choiceColumn}>
             {SCENARIOS.map((item) => (
@@ -814,6 +1233,11 @@ export default function App() {
             <Button title="Display Address" onPress={runDisplayAddress} disabled={actionDisabled} />
             <Button title="Generate Fake PSBT" onPress={runGeneratePsbt} disabled={actionDisabled} />
             <Button title="Sign Current PSBT" onPress={runSignPsbt} disabled={actionDisabled} />
+            <Button
+              title="Sign Mixed-Ownership PSBT"
+              onPress={runMixedOwnershipPsbt}
+              disabled={actionDisabled || scenario.id !== "ranged"}
+            />
             <Button title="Sign Message" onPress={runSignMessage} disabled={actionDisabled} />
             <Button title="Run Full Workflow" onPress={runFullWorkflow} disabled={actionDisabled} />
             <Button title="Reset Selected Store" onPress={resetStore} disabled={actionDisabled} />

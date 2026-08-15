@@ -19,6 +19,7 @@ For the selected wallet, transport, and descriptor scenario, the app can:
 - Register or check hardware-wallet policies.
 - Derive an address locally and confirm it on the device.
 - Generate and sign a fake PSBT backed by a synthetic, no-funds transaction.
+- Sign a three-input mixed-ownership PSBT without touching its foreign input.
 - Sign legacy Bitcoin messages for standard `wpkh` scenarios.
 - Close the owned hardware connection after every connected action.
 
@@ -45,10 +46,21 @@ On Android, the app exposes:
 - BitBox Nova over BLE or USB.
 - Ledger over BLE or USB/HID.
 
-These are the paths available in the app. A path is considered validated only
-after its complete workflow has passed on a physical device.
+These are the paths available in the app. Current physical status:
 
-No path currently has a complete validation recorded in this README.
+| Path | Status |
+| --- | --- |
+| BitBox Nova BLE on iOS | Native build passed; physical device not online |
+| BitBox Nova BLE on Android | Native build passed; physical device not online |
+| BitBox Nova USB on Android | Native build passed; physical device not online |
+| Classic BitBox02 USB on Android | Not tested; hardware unavailable |
+| Ledger BLE on iOS | Native build passed; physical device not online |
+| Ledger BLE on Android | Native build passed; physical device not online |
+| Ledger USB/HID on Android | Native build passed; physical device not online |
+
+Classic BitBox02 USB remains structurally supported through the shared USB
+VID/PID and canonical `bitbox02-multi` / `bitbox02-btconly` product detection,
+but this repository does not claim physical validation without that hardware.
 
 Expo Go cannot load the required native modules. Use an Expo development client.
 
@@ -59,6 +71,7 @@ Descriptors exposes separate BitBox and Ledger entrypoints:
 ```ts
 import * as bitbox from "@bitcoinerlab/descriptors/bitbox";
 import * as ledger from "@bitcoinerlab/descriptors/ledger";
+import * as bitboxDriverModule from "@bitcoinerlab/bitbox-react-native";
 ```
 
 These entrypoints provide the descriptor operations for each wallet family. The
@@ -72,8 +85,9 @@ functions. `mode` chooses which function to call:
 ```ts
 const session = await bitbox.connect({
   driver: {
-    module: import("@bitcoinerlab/bitbox-react-native"),
-    mode: "ble"
+    module: bitboxDriverModule,
+    mode: "ble",
+    ...(selectedDevice ? { device: selectedDevice } : {})
   },
   network: networks.bitcoin,
   store: bitboxStore
@@ -101,9 +115,9 @@ For Android Ledger USB/HID, the transport is instead:
 import("@ledgerhq/react-native-hid")
 ```
 
-The app omits `driver.device`. Ledger uses its transport's `create()` behavior;
-BitBox asks its provider to connect without a device id. Each selects the first
-matching device it finds.
+Ledger omits `driver.device` and uses its transport's `create()` behavior.
+BitBox passes the selected discovery record when present; automatic mode omits
+it and asks the provider for its first matching device.
 
 Every returned session owns its connection. The app always releases it with:
 
@@ -115,7 +129,16 @@ Both connection paths read the live master fingerprint before returning. If an
 existing store belongs to another wallet, connection fails and the new resource
 is closed.
 
-## Stores
+## BitBox Discovery And Stores
+
+The BitBox section can scan for Nova BLE devices on either platform and list
+attached USB devices on Android. Selection is optional: automatic mode retains
+the first-matching-device behavior. Discovery labels use `name` when available
+and otherwise show `deviceId`; Android USB ids stay only in component state.
+
+After connection, the app logs the native transport, canonical product, and
+firmware version. Nova products use the upstream canonical names
+`bitbox02-plus-btconly` and `bitbox02-plus-multi`.
 
 BitBox and Ledger stores are separate JSON objects because their cached policy
 metadata is different. The app copies `session.store` back into the selected
@@ -143,7 +166,10 @@ version `2.1.0` or newer.
 Build and pack the current sibling sources:
 
 ```sh
+(cd ../bitbox-react-native && npm test)
+(cd ../bitbox-react-native && npm run native:go:test)
 (cd ../bitbox-react-native && npm run build:src && npm pack)
+(cd ../descriptors && npm test)
 (cd ../descriptors && npm run build:src && npm run build:packages && npm pack)
 (cd ../descriptors/packages/descriptors && npm pack)
 ```
@@ -205,17 +231,26 @@ Tracked native configuration lives in `app.json`. The generated `ios/` and
 
 1. Select BitBox or Ledger.
 2. Select a transport available on the current platform.
-3. Select a descriptor scenario.
-4. Leave the provider store as `{}` for a new test, or paste a previous store.
-5. Run an individual action or **Run Full Workflow**.
-6. Allow any Bluetooth or USB permission prompts from the operating system.
-7. Confirm address, policy, and signing prompts on the hardware wallet.
-8. Inspect or share the on-screen log.
+3. For BitBox, optionally discover and select a device; automatic mode remains
+   available.
+4. Select a descriptor scenario.
+5. Leave the provider store as `{}` for a new test, or paste a previous store.
+6. Run an individual action or **Run Full Workflow**.
+7. Allow any Bluetooth or USB permission prompts from the operating system.
+8. Confirm address, policy, and signing prompts on the hardware wallet.
+9. Inspect or share the on-screen log.
 
 The individual actions make it easier to isolate failures in connection,
 derivation, policy registration, address display, PSBT signing, or message
 signing. **Run Full Workflow** exercises the complete scenario through one owned
 session.
+
+**Sign Mixed-Ownership PSBT** is available for ranged `wpkh`. It creates three
+unique synthetic inputs: a pre-signed foreign software-wallet input and two
+hardware-owned inputs at `/0/0` and `/0/1`. One whole-PSBT hardware signing call
+must preserve the foreign signature and all metadata, add one signature to each
+owned input, keep the PSBT partial, and preserve its input and output counts. It
+never updates the normal PSBT field, finalizes, or broadcasts the transaction.
 
 ## Physical Validation
 
@@ -228,9 +263,13 @@ For each supported device path, verify:
 - Address confirmation on the hardware wallet.
 - Policy registration for non-standard descriptors.
 - Fake PSBT signing.
+- Mixed-ownership PSBT signing and foreign-signature preservation.
 - Message signing where the scenario supports it.
 - Store reuse and fingerprint-mismatch rejection.
 
 Record a path as validated only after every applicable step succeeds on the
 physical device. Complete path validation covers all five scenarios; message
 signing applies only to the two `wpkh` scenarios.
+
+Stale BitBox policy restoration is covered by descriptors unit tests. Do not
+reset or damage a physical device solely to reproduce stale device state.

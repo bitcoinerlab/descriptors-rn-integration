@@ -13,8 +13,9 @@
 ## Local Dependencies
 
 - All three `@bitcoinerlab/*` dependencies are local tarballs at exact sibling
-  paths. After a BitBox provider change, run `(cd ../bitbox-react-native && npm
-  run build:src && npm pack)`; after descriptor changes, run these commands in
+  paths. After a BitBox provider change, run its `npm test`, `npm run
+  native:go:test`, then `(cd ../bitbox-react-native && npm run build:src && npm
+  pack)`; after descriptor changes, run `npm test` there, then these commands in
   order:
   `(cd ../descriptors && npm run build:src && npm run build:packages && npm pack)`
   and `(cd ../descriptors/packages/descriptors && npm pack)`. Run `npm install`
@@ -44,12 +45,21 @@
 - Keep BitBox and Ledger stores separate. Persist `session.store`, not a session;
   this harness only copies stores into provider-specific in-memory JSON fields.
   Owned connections bind the live fingerprint before returning.
-- Pass literal driver import promises to each descriptors device entrypoint's
-  direct `connect(...)` API. Ledger receives `driver.transport` and
-  `driver.bitcoinApi`, while BitBox receives `driver.module`. Do not open
-  transports or construct `AppClient` for the normal RN path. Omit
-  `driver.device` so each injected package uses its first-device behavior.
+- Pass the static `@bitcoinerlab/bitbox-react-native` namespace to BitBox
+  `driver.module` so the same module supports discovery and connection. Pass a
+  selected discovery record through `driver.device`, or omit it for first-device
+  behavior. Ledger keeps literal `driver.transport` and `driver.bitcoinApi`
+  promises and first-device behavior. Do not open transports or construct
+  `AppClient` for the normal RN path.
+- BitBox BLE discovery uses `discoverBitBoxNovaBleDevices(...)`; Android USB uses
+  `listAttachedBitBoxUsbDevices()`. Display discovery `name` when present and
+  fall back to `deviceId`; never treat discovery data as connected product
+  metadata. Read canonical product and firmware from the connected client.
 - Close every owned connection with idempotent `session.close()`.
+- Keep the mixed-ownership PSBT action provider-neutral and limited to ranged
+  `wpkh`. It must use whole-PSBT signing, preserve the foreign input signature
+  and metadata, sign only both hardware-owned inputs, and never finalize or
+  broadcast the synthetic transaction.
 - Preserve the existing native bundle/application identifiers unless explicitly
   asked to change them; replacing them loses the installed app identity and may
   lose app-private BitBox pairing state.
