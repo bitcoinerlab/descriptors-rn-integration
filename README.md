@@ -244,7 +244,9 @@ Tracked native configuration lives in `app.json`. The generated `ios/` and
 The individual actions make it easier to isolate failures in connection,
 derivation, policy registration, address display, PSBT signing, or message
 signing. **Run Full Workflow** exercises the complete scenario through one owned
-session.
+session. Scenario-specific actions are shown only when applicable. The explicit
+policy action reports whether BitBox already stored the policy; Ledger does not
+expose equivalent persistent device-storage status.
 
 **Sign Mixed-Ownership PSBT** is available for ranged `wpkh`. It creates three
 unique synthetic inputs: a pre-signed foreign software-wallet input and two

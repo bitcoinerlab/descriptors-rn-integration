@@ -271,12 +271,11 @@ function hardwareKeyExpression(
 async function hardwareRegisterPolicy(
   connection: HardwareConnection,
   params: { descriptor: string; name: string },
-): Promise<void> {
+): Promise<boolean | undefined> {
   if (connection.provider === "bitbox") {
-    await bitbox.registerPolicy({ session: connection.session, ...params });
-  } else {
-    await ledger.registerPolicy({ session: connection.session, ...params });
+    return bitbox.registerPolicy({ session: connection.session, ...params });
   }
+  return ledger.registerPolicy({ session: connection.session, ...params });
 }
 
 function positionParams(position: Position) {
@@ -871,11 +870,26 @@ export default function App() {
         return;
       }
       add("Calling descriptors registerPolicy; confirm on the device if requested...");
-      await hardwareRegisterPolicy(hardware, {
+      const wasPolicyStoredOnDevice = await hardwareRegisterPolicy(hardware, {
         descriptor,
         name: scenario.policyName,
       });
       add("Policy registration/check complete; store metadata was updated.");
+      if (wasPolicyStoredOnDevice === true) {
+        const message =
+          "BitBox reported that this policy was already stored on the device. No registration confirmation was needed.";
+        add(message);
+        Alert.alert("Policy Already Stored", message);
+      } else if (wasPolicyStoredOnDevice === false) {
+        const message =
+          "BitBox reported that this policy was not stored on the device. Registration has now completed.";
+        add(message);
+        Alert.alert("Policy Registered", message);
+      } else {
+        const message = `${providerLabel(hardware.provider)} does not report persistent device policy storage for this operation.`;
+        add(message);
+        Alert.alert("Policy Registration Complete", message);
+      }
     });
   }
 
@@ -1228,16 +1242,22 @@ export default function App() {
           <Text style={styles.sectionLabel}>Workflow Actions</Text>
           <View style={styles.buttonGrid}>
             <Button title="Read + Build" onPress={runReadOnly} disabled={actionDisabled} />
-            <Button title="Register / Check" onPress={runRegisterPolicy} disabled={actionDisabled} />
+            {scenario.policyName ? (
+              <Button title="Register / Check" onPress={runRegisterPolicy} disabled={actionDisabled} />
+            ) : null}
             <Button title="Display Address" onPress={runDisplayAddress} disabled={actionDisabled} />
             <Button title="Generate Fake PSBT" onPress={runGeneratePsbt} disabled={actionDisabled} />
             <Button title="Sign Current PSBT" onPress={runSignPsbt} disabled={actionDisabled} />
-            <Button
-              title="Sign Mixed-Ownership PSBT"
-              onPress={runMixedOwnershipPsbt}
-              disabled={actionDisabled || scenario.id !== "ranged"}
-            />
-            <Button title="Sign Message" onPress={runSignMessage} disabled={actionDisabled} />
+            {scenario.id === "ranged" ? (
+              <Button
+                title="Sign Mixed-Ownership PSBT"
+                onPress={runMixedOwnershipPsbt}
+                disabled={actionDisabled}
+              />
+            ) : null}
+            {scenario.messageSigning ? (
+              <Button title="Sign Message" onPress={runSignMessage} disabled={actionDisabled} />
+            ) : null}
             <Button title="Run Full Workflow" onPress={runFullWorkflow} disabled={actionDisabled} />
             <Button title="Reset Selected Store" onPress={resetStore} disabled={actionDisabled} />
             <Button title="Share Results" onPress={shareLog} disabled={running} />
