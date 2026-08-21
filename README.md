@@ -248,6 +248,10 @@ session. Scenario-specific actions are shown only when applicable. The explicit
 policy action reports whether BitBox already stored the policy; Ledger does not
 expose equivalent persistent device-storage status.
 
+**Sign Auto-Generated Fake PSBT** builds and signs its deterministic no-funds
+PSBT in one connection. The harness does not accept arbitrary pasted PSBTs; the
+read-only PSBT field shows the latest generated or signed result.
+
 **Sign Mixed-Ownership PSBT** is available for ranged `wpkh`. It creates three
 unique synthetic inputs: a pre-signed foreign software-wallet input and two
 hardware-owned inputs at `/0/0` and `/0/1`. Ledger must preserve the foreign
@@ -255,7 +259,8 @@ signature and all metadata, add one signature to each owned input, keep the PSBT
 partial, and preserve its input and output counts. BitBox currently rejects the
 foreign input; the app surfaces that provider error verbatim rather than
 reporting a Bluetooth failure. The action never updates the normal PSBT field,
-finalizes, or broadcasts the transaction.
+finalizes, or broadcasts the transaction. It generates this mixed PSBT itself
+and does not depend on the normal fake-PSBT action.
 
 ## Physical Validation
 

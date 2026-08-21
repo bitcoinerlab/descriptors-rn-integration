@@ -62,7 +62,6 @@ type Scenario = {
 };
 
 type LogLine = { id: number; text: string };
-type PsbtContext = { provider: ProviderId; scenario: ScenarioId };
 
 const BITBOX_PRODUCTS: readonly bitboxDriverModule.BitBoxProduct[] = [
   "bitbox02-multi",
@@ -634,7 +633,6 @@ export default function App() {
     ledger: EMPTY_STORE_JSON,
   });
   const [psbt, setPsbt] = useState("");
-  const [psbtContext, setPsbtContext] = useState<PsbtContext>();
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogLine[]>([
     { id: 0, text: "Ready. Select one provider, transport, and scenario." },
@@ -673,7 +671,6 @@ export default function App() {
 
   function clearPsbt() {
     setPsbt("");
-    setPsbtContext(undefined);
   }
 
   function selectProvider(nextProvider: ProviderId) {
@@ -913,36 +910,8 @@ export default function App() {
     });
   }
 
-  function runGeneratePsbt() {
-    void runWithConnection("Generating the shared fake PSBT...", async (hardware) => {
-      const descriptor = await buildDescriptor(hardware, scenario);
-      const generated = await generateFakePsbt(
-        hardware,
-        descriptor,
-        scenario.position,
-      );
-      setPsbt(generated);
-      setPsbtContext({ provider, scenario: scenario.id });
-      add(`Fake PSBT: ${summarizeValue(generated)}`);
-    });
-  }
-
-  function runSignPsbt() {
-    const value = psbt.trim();
-    if (!value) {
-      resetLog();
-      add("Generate or paste a base64 PSBT first.");
-      return;
-    }
-    if (
-      psbtContext &&
-      (psbtContext.provider !== provider || psbtContext.scenario !== scenario.id)
-    ) {
-      resetLog();
-      add("The generated PSBT belongs to a different provider or scenario. Generate it again before signing.");
-      return;
-    }
-    void runWithConnection("Running shared PSBT-signing workflow...", async (hardware) => {
+  function runFakePsbtSigning() {
+    void runWithConnection("Generating and signing the shared fake PSBT...", async (hardware) => {
       const descriptor = await buildDescriptor(hardware, scenario);
       if (scenario.policyName) {
         add("Ensuring policy registration before PSBT signing...");
@@ -951,10 +920,16 @@ export default function App() {
           name: scenario.policyName,
         });
       }
-      const parsed = Psbt.fromBase64(value, { network: BITCOIN_NETWORK });
+      const generated = await generateFakePsbt(
+        hardware,
+        descriptor,
+        scenario.position,
+      );
+      setPsbt(generated);
+      add(`Generated fake PSBT: ${summarizeValue(generated)}`);
+      const parsed = Psbt.fromBase64(generated, { network: BITCOIN_NETWORK });
       const signed = await hardwareSignPsbt(hardware, parsed);
       setPsbt(signed);
-      setPsbtContext({ provider, scenario: scenario.id });
       add(`Signed PSBT: ${summarizeValue(signed)}`);
     });
   }
@@ -1097,12 +1072,10 @@ export default function App() {
         scenario.position,
       );
       setPsbt(generated);
-      setPsbtContext({ provider, scenario: scenario.id });
       add(`Generated shared fake PSBT: ${summarizeValue(generated)}`);
       const parsed = Psbt.fromBase64(generated, { network: BITCOIN_NETWORK });
       const signed = await hardwareSignPsbt(hardware, parsed);
       setPsbt(signed);
-      setPsbtContext({ provider, scenario: scenario.id });
       add(`Signed PSBT: ${summarizeValue(signed)}`);
       if (scenario.messageSigning) {
         const signature = await hardwareSignMessage(
@@ -1246,8 +1219,11 @@ export default function App() {
               <Button title="Register / Check" onPress={runRegisterPolicy} disabled={actionDisabled} />
             ) : null}
             <Button title="Display Address" onPress={runDisplayAddress} disabled={actionDisabled} />
-            <Button title="Generate Fake PSBT" onPress={runGeneratePsbt} disabled={actionDisabled} />
-            <Button title="Sign Current PSBT" onPress={runSignPsbt} disabled={actionDisabled} />
+            <Button
+              title="Sign Auto-Generated Fake PSBT"
+              onPress={runFakePsbtSigning}
+              disabled={actionDisabled}
+            />
             {scenario.id === "ranged" ? (
               <Button
                 title="Sign Mixed-Ownership PSBT"
@@ -1263,19 +1239,16 @@ export default function App() {
             <Button title="Share Results" onPress={shareLog} disabled={running} />
           </View>
 
+          <Text style={styles.sectionLabel}>Latest Generated / Signed PSBT</Text>
           <TextInput
             style={styles.multiInput}
             value={psbt}
-            onChangeText={(value) => {
-              setPsbt(value);
-              setPsbtContext(undefined);
-            }}
-            placeholder="Generated or pasted base64 PSBT"
+            placeholder="Run a fake-PSBT signing action to populate this output"
             placeholderTextColor="#718096"
             autoCapitalize="none"
             autoCorrect={false}
             multiline
-            editable={!running}
+            editable={false}
           />
 
           <ScrollView style={styles.log} contentContainerStyle={styles.logContent}>
