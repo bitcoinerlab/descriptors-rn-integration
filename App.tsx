@@ -348,7 +348,6 @@ function hardwareErrorMessage(error: unknown, transport: Transport): string {
   }
   if (
     normalized.includes("timeout") ||
-    normalized.includes("not found") ||
     normalized.includes("no device") ||
     normalized.includes("disconnected")
   ) {
