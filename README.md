@@ -19,7 +19,8 @@ For the selected wallet, transport, and descriptor scenario, the app can:
 - Register or check hardware-wallet policies.
 - Derive an address locally and confirm it on the device.
 - Generate and sign a fake PSBT backed by a synthetic, no-funds transaction.
-- Sign a three-input mixed-ownership PSBT without touching its foreign input.
+- Exercise a three-input mixed-ownership PSBT, which Ledger signs without
+  touching its foreign input and BitBox currently rejects with a provider error.
 - Sign legacy Bitcoin messages for standard `wpkh` scenarios.
 - Close the owned hardware connection after every connected action.
 
@@ -50,7 +51,7 @@ These are the paths available in the app. Current physical status:
 
 | Path | Status |
 | --- | --- |
-| BitBox Nova BLE on iOS | Native build passed; physical device not online |
+| BitBox Nova BLE on iOS | Physical connection and message signing passed; full matrix incomplete |
 | BitBox Nova BLE on Android | Native build passed; physical device not online |
 | BitBox Nova USB on Android | Native build passed; physical device not online |
 | Classic BitBox02 USB on Android | Not tested; hardware unavailable |
@@ -247,10 +248,12 @@ session.
 
 **Sign Mixed-Ownership PSBT** is available for ranged `wpkh`. It creates three
 unique synthetic inputs: a pre-signed foreign software-wallet input and two
-hardware-owned inputs at `/0/0` and `/0/1`. One whole-PSBT hardware signing call
-must preserve the foreign signature and all metadata, add one signature to each
-owned input, keep the PSBT partial, and preserve its input and output counts. It
-never updates the normal PSBT field, finalizes, or broadcasts the transaction.
+hardware-owned inputs at `/0/0` and `/0/1`. Ledger must preserve the foreign
+signature and all metadata, add one signature to each owned input, keep the PSBT
+partial, and preserve its input and output counts. BitBox currently rejects the
+foreign input; the app surfaces that provider error verbatim rather than
+reporting a Bluetooth failure. The action never updates the normal PSBT field,
+finalizes, or broadcasts the transaction.
 
 ## Physical Validation
 
@@ -263,7 +266,8 @@ For each supported device path, verify:
 - Address confirmation on the hardware wallet.
 - Policy registration for non-standard descriptors.
 - Fake PSBT signing.
-- Mixed-ownership PSBT signing and foreign-signature preservation.
+- Mixed-ownership PSBT signing and foreign-signature preservation where the
+  provider supports it.
 - Message signing where the scenario supports it.
 - Store reuse and fingerprint-mismatch rejection.
 

@@ -56,10 +56,11 @@
   fall back to `deviceId`; never treat discovery data as connected product
   metadata. Read canonical product and firmware from the connected client.
 - Close every owned connection with idempotent `session.close()`.
-- Keep the mixed-ownership PSBT action provider-neutral and limited to ranged
-  `wpkh`. It must use whole-PSBT signing, preserve the foreign input signature
-  and metadata, sign only both hardware-owned inputs, and never finalize or
-  broadcast the synthetic transaction.
+- Keep the mixed-ownership PSBT action shared and limited to ranged `wpkh`. On
+  Ledger it must preserve the foreign input signature and metadata and sign only
+  both hardware-owned inputs. BitBox currently returns its provider error for
+  the foreign input; surface that error without classifying it as a transport
+  failure. Never finalize or broadcast the synthetic transaction.
 - Preserve the existing native bundle/application identifiers unless explicitly
   asked to change them; replacing them loses the installed app identity and may
   lose app-private BitBox pairing state.
