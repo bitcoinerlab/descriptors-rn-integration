@@ -10,25 +10,18 @@
 - Use Expo SDK 54 APIs pinned by `package.json`; do not assume current Expo docs
   apply. Expo Go cannot load the custom native module.
 
-## Local Dependencies
+## Published Dependencies
 
-- All three `@bitcoinerlab/*` dependencies are local tarballs at exact sibling
-  paths. After a BitBox provider change, run its `npm test`, `npm run
-  native:go:test`, then `(cd ../bitbox-react-native && npm run build:src && npm
-  pack)`; after descriptor changes, run `npm test` there, then these commands in
-  order:
-  `(cd ../descriptors && npm run build:src && npm run build:packages && npm pack)`
-  and `(cd ../descriptors/packages/descriptors && npm pack)`. Run `npm install`
-  here and verify `package-lock.json` resolves all three packages from
-  `file:../...` tarballs.
-- Same-version tarballs can remain stale in npm's cache and lock integrity. After
-  refresh, inspect installed declarations for Ledger `driver.transport` and
-  `driver.bitcoinApi`, BitBox `driver.module`, owned `session.close()`, and
-  fingerprint binding. Use the explicit three-tarball `npm install --save
-  --force ...` command in `README.md` when necessary.
-- `npm pack` does not run `prepublishOnly`. Explicitly build local artifacts, and
-  use each library's full release lifecycle from clean generated output before
-  publishing.
+- Install `@bitcoinerlab/descriptors` and
+  `@bitcoinerlab/bitbox-react-native` from the npm registry. Do not replace them
+  with sibling paths, local tarballs, or `file:` dependencies unless the user
+  explicitly requests testing unreleased source.
+- `@bitcoinerlab/descriptors-core` is a transitive dependency of
+  `@bitcoinerlab/descriptors`; do not add it directly unless app code imports it.
+- After dependency updates, verify `package-lock.json` resolves all
+  `@bitcoinerlab/*` packages from `https://registry.npmjs.org/`. Inspect the
+  installed declarations for Ledger `driver.transport` and `driver.bitcoinApi`,
+  BitBox `driver.module`, owned `session.close()`, and fingerprint binding.
 - Use npm and preserve `package-lock.json`; do not add a Yarn lockfile.
 - Keep `react-native-ble-plx` exactly `3.4.0`: Ledger BLE `6.41.0` depends on
   that exact version, and multiple native copies are unsafe.

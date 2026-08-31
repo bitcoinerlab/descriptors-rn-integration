@@ -156,39 +156,21 @@ persist a live session.
 - Xcode and CocoaPods for iOS builds.
 - Android Studio and the Android SDK for Android builds.
 - A physical BitBox Nova or Ledger device.
-- The sibling `descriptors` and `bitbox-react-native` repositories while the
-  dependencies remain local tarballs.
 
 Ledger tests require an unlocked device with the mainnet `Bitcoin` app open at
 version `2.1.0` or newer.
 
-## Install Local Packages
+## Install Dependencies
 
-Build and pack the current sibling sources:
-
-```sh
-(cd ../bitbox-react-native && npm test)
-(cd ../bitbox-react-native && npm run native:go:test)
-(cd ../bitbox-react-native && npm run build:src && npm pack)
-(cd ../descriptors && npm test)
-(cd ../descriptors && npm run build:src && npm run build:packages && npm pack)
-(cd ../descriptors/packages/descriptors && npm pack)
-```
-
-Install all three tarballs explicitly. `--force` is needed when a tarball keeps
-the same package version but its contents have changed:
+Install the published packages from the npm registry:
 
 ```sh
-npm install --save --force \
-  ../bitbox-react-native/bitcoinerlab-bitbox-react-native-0.1.0.tgz \
-  ../descriptors/packages/descriptors/bitcoinerlab-descriptors-3.1.7.tgz \
-  ../descriptors/bitcoinerlab-descriptors-core-3.1.7.tgz
+npm install
 ```
 
-`npm pack` does not run `prepublishOnly`, so the explicit build commands above
-are required before creating local tarballs.
-
-This repository uses npm and tracks `package-lock.json`.
+This repository uses npm and tracks `package-lock.json`. The lockfile must
+resolve `@bitcoinerlab/descriptors`, its `descriptors-core` dependency, and
+`@bitcoinerlab/bitbox-react-native` from `https://registry.npmjs.org/`.
 
 Keep `react-native-ble-plx` at `3.4.0`. Ledger BLE `6.41.0` depends on that exact
 version, and both must resolve to one native installation:
