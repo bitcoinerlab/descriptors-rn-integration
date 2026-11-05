@@ -4,9 +4,10 @@ Expo development-client app for testing the React Native hardware-wallet APIs in
 `@bitcoinerlab/descriptors` on physical iOS and Android devices.
 
 The app runs the same descriptor, address, policy, PSBT, and message-signing
-workflows against BitBox and Ledger. It is an integration harness, not a wallet:
-it does not hold funds or broadcast transactions. Descriptor stores, PSBTs, and
-logs remain in memory; native modules may retain their own pairing state.
+workflows against BitBox, Jade, and Ledger. It is an integration harness, not a
+wallet: it does not hold funds or broadcast transactions. Descriptor stores,
+PSBTs, and logs remain in memory; native modules may retain their own pairing
+state.
 
 ## What The App Tests
 
@@ -19,7 +20,7 @@ For the selected wallet, transport, and descriptor scenario, the app can:
 - Register or check hardware-wallet policies.
 - Derive an address locally and confirm it on the device.
 - Generate and sign a fake PSBT backed by a synthetic, no-funds transaction.
-- Exercise a three-input mixed-ownership PSBT, which Ledger signs without
+- Exercise a three-input mixed-ownership PSBT, which Jade and Ledger sign without
   touching its foreign input and BitBox currently rejects with a provider error.
 - Sign legacy Bitcoin messages for standard `wpkh` scenarios.
 - Close the owned hardware connection after every connected action.
@@ -40,24 +41,29 @@ PSBT contains no real UTXO and is not intended for broadcast.
 On iOS, the app exposes:
 
 - BitBox Nova over BLE.
+- Blockstream Jade over BLE.
 - Ledger over BLE.
 
 On Android, the app exposes:
 
 - BitBox Nova over BLE or USB.
+- Blockstream Jade over BLE or USB serial.
 - Ledger over BLE or USB/HID.
 
 These are the paths available in the app. Current physical status:
 
-| Path | Status |
-| --- | --- |
-| BitBox Nova BLE on iOS | Physical connection and message signing passed; full matrix incomplete |
-| BitBox Nova BLE on Android | Native build passed; physical device not online |
-| BitBox Nova USB on Android | Native build passed; physical device not online |
-| Classic BitBox02 USB on Android | Not tested; hardware unavailable |
-| Ledger BLE on iOS | Native build passed; physical device not online |
-| Ledger BLE on Android | Native build passed; physical device not online |
-| Ledger USB/HID on Android | Native build passed; physical device not online |
+| Path                            | Status                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| BitBox Nova BLE on iOS          | Physical connection and message signing passed; full matrix incomplete |
+| BitBox Nova BLE on Android      | Native build passed; physical device not online                        |
+| BitBox Nova USB on Android      | Native build passed; physical device not online                        |
+| Classic BitBox02 USB on Android | Not tested; hardware unavailable                                       |
+| Jade BLE on iOS                 | Native build passed; physical device not yet tested                    |
+| Jade BLE on Android             | Native build passed; physical device not yet tested                    |
+| Jade USB serial on Android      | Native build passed; physical device not yet tested                    |
+| Ledger BLE on iOS               | Native build passed; physical device not online                        |
+| Ledger BLE on Android           | Native build passed; physical device not online                        |
+| Ledger USB/HID on Android       | Native build passed; physical device not online                        |
 
 Classic BitBox02 USB remains structurally supported through the shared USB
 VID/PID and canonical `bitbox02-multi` / `bitbox02-btconly` product detection,
@@ -67,12 +73,14 @@ Expo Go cannot load the required native modules. Use an Expo development client.
 
 ## How Connections Work
 
-Descriptors exposes separate BitBox and Ledger entrypoints:
+Descriptors exposes separate BitBox, Jade, and Ledger entrypoints:
 
 ```ts
 import * as bitbox from "@bitcoinerlab/descriptors/bitbox";
+import * as jade from "@bitcoinerlab/descriptors/jade";
 import * as ledger from "@bitcoinerlab/descriptors/ledger";
 import * as bitboxDriverModule from "@bitcoinerlab/bitbox-react-native";
+import * as jadeDriverModule from "@bitcoinerlab/jade-react-native";
 ```
 
 These entrypoints provide the descriptor operations for each wallet family. The
@@ -88,12 +96,30 @@ const session = await bitbox.connect({
   driver: {
     module: bitboxDriverModule,
     mode: "ble",
-    ...(selectedDevice ? { device: selectedDevice } : {})
+    ...(selectedDevice ? { device: selectedDevice } : {}),
   },
   network: networks.bitcoin,
-  store: bitboxStore
+  store: bitboxStore,
 });
 ```
+
+Jade follows the same injected-module pattern. BLE works on iOS and Android;
+USB serial works on Android only:
+
+```ts
+const session = await jade.connect({
+  driver: {
+    module: jadeDriverModule,
+    mode: "ble",
+    ...(selectedDevice ? { device: selectedDevice } : {}),
+  },
+  network: networks.bitcoin,
+  store: jadeStore,
+});
+```
+
+Jade authenticates during `connect()`. Unlock the device, approve prompts, and
+keep the phone online so the default blind-PIN-server request can complete.
 
 Ledger receives two modules: a transport module for opening the device and the
 Ledger Bitcoin API for wallet policies and commands:
@@ -103,22 +129,22 @@ const session = await ledger.connect({
   driver: {
     transport: import("@ledgerhq/react-native-hw-transport-ble"),
     bitcoinApi: import("@ledgerhq/ledger-bitcoin"),
-    app: { name: "Bitcoin", minVersion: "2.1.0" }
+    app: { name: "Bitcoin", minVersion: "2.1.0" },
   },
   network: networks.bitcoin,
-  store: ledgerStore
+  store: ledgerStore,
 });
 ```
 
 For Android Ledger USB/HID, the transport is instead:
 
 ```ts
-import("@ledgerhq/react-native-hid")
+import("@ledgerhq/react-native-hid");
 ```
 
 Ledger omits `driver.device` and uses its transport's `create()` behavior.
-BitBox passes the selected discovery record when present; automatic mode omits
-it and asks the provider for its first matching device.
+BitBox and Jade pass the selected discovery record when present; automatic mode
+omits it and asks the provider for its first matching device.
 
 Every returned session owns its connection. The app always releases it with:
 
@@ -126,24 +152,31 @@ Every returned session owns its connection. The app always releases it with:
 await session.close();
 ```
 
-Both connection paths read the live master fingerprint before returning. If an
+All connection paths read the live master fingerprint before returning. If an
 existing store belongs to another wallet, connection fails and the new resource
 is closed.
 
-## BitBox Discovery And Stores
+## Device Discovery And Stores
 
 The BitBox section can scan for Nova BLE devices on either platform and list
 attached USB devices on Android. Selection is optional: automatic mode retains
 the first-matching-device behavior. Discovery labels use `name` when available
 and otherwise show `deviceId`; Android USB ids stay only in component state.
 
+The Jade section uses the same selection flow through
+`discoverJadeBleDevices()` and `listAttachedJadeUsbDevices()`. Android supports
+only one automatic `USB_DEVICE_ATTACHED` metadata filter per activity. The
+BitBox filter retains that optional auto-launch slot in this multi-wallet app;
+Jade USB remains available by opening the app and using Jade discovery or
+automatic connection.
+
 After connection, the app logs the native transport, canonical product, and
 firmware version. Nova products use the upstream canonical names
 `bitbox02-plus-btconly` and `bitbox02-plus-multi`.
 
-BitBox and Ledger stores are separate JSON objects because their cached policy
-metadata is different. The app copies `session.store` back into the selected
-wallet's JSON field after each connected action.
+BitBox, Jade, and Ledger stores are separate JSON objects because their cached
+policy metadata is different. The app copies `session.store` back into the
+selected wallet's JSON field after each connected action.
 
 Stores are held only in React state and are lost when the app restarts. You can
 copy the JSON elsewhere when testing reconnection or fingerprint binding. Never
@@ -155,28 +188,38 @@ persist a live session.
 - npm.
 - Xcode and CocoaPods for iOS builds.
 - Android Studio and the Android SDK for Android builds.
-- A physical BitBox Nova or Ledger device.
+- A physical BitBox Nova, Blockstream Jade, or Ledger device.
 
 Ledger tests require an unlocked device with the mainnet `Bitcoin` app open at
 version `2.1.0` or newer.
 
 ## Install Dependencies
 
-Install the published packages from the npm registry:
+Descriptors `3.3.0` and the Jade packages are not published yet. This branch tests
+the sibling `../descriptors` and `../jade` repositories. Install their development
+dependencies first (`npm ci` in each repository), then run:
 
 ```sh
-npm install
+npm run prepare:local
 ```
 
-This repository uses npm and tracks `package-lock.json`. The lockfile must
-resolve `@bitcoinerlab/descriptors`, its `descriptors-core` dependency, and
-`@bitcoinerlab/bitbox-react-native` from `https://registry.npmjs.org/`.
+This builds both sibling repositories, packs the four required packages into
+the ignored `.local/packages/` directory, and installs them into this app. Repeat
+it after changing either library: rebuilding a sibling alone does not update
+the app's installed copy. Explicit tarball installation updates the lockfile's
+integrity hashes even when package versions have not changed.
+
+This repository uses npm and tracks `package-lock.json`. While this feature is
+unreleased, the lockfile intentionally resolves descriptors `3.3.0` and both
+Jade packages from local tarballs. The direct descriptors-core and Jade core
+entries ensure npm satisfies the unpublished exact transitive versions. Switch
+these four entries to registry versions after publication.
 
 Keep `react-native-ble-plx` at `3.4.0`. Ledger BLE `6.41.0` depends on that exact
 version, and both must resolve to one native installation:
 
 ```sh
-npm ls @ledgerhq/react-native-hw-transport-ble react-native-ble-plx --all
+npm ls @bitcoinerlab/jade-react-native @ledgerhq/react-native-hw-transport-ble react-native-ble-plx --all
 ```
 
 ## Verify The JavaScript Build
@@ -190,6 +233,13 @@ npm run test:bundle:android
 The Expo export and Metro bundle checks verify that all literal imports resolve
 for each platform. They do not test native linking, permissions, Bluetooth, USB,
 or hardware communication.
+
+After a prebuild, run the Jade USB permission callback regression on simulated
+Android API levels 30, 31, and 35:
+
+```sh
+(cd android && ./gradlew :bitcoinerlab-jade-react-native:testDebugUnitTest)
+```
 
 ## Build A Development Client
 
@@ -212,10 +262,10 @@ Tracked native configuration lives in `app.json`. The generated `ios/` and
 
 ## Using The App
 
-1. Select BitBox or Ledger.
+1. Select BitBox, Jade, or Ledger.
 2. Select a transport available on the current platform.
-3. For BitBox, optionally discover and select a device; automatic mode remains
-   available.
+3. For BitBox or Jade, optionally discover and select a device; automatic mode
+   remains available.
 4. Select a descriptor scenario.
 5. Leave the provider store as `{}` for a new test, or paste a previous store.
 6. Run an individual action or **Run Full Workflow**.
@@ -227,22 +277,27 @@ The individual actions make it easier to isolate failures in connection,
 derivation, policy registration, address display, PSBT signing, or message
 signing. **Run Full Workflow** exercises the complete scenario through one owned
 session. Scenario-specific actions are shown only when applicable. The explicit
-policy action reports whether BitBox already stored the policy; Ledger does not
-expose equivalent persistent device-storage status.
+policy action reports whether BitBox or Jade already stored the policy; Ledger
+does not expose equivalent persistent device-storage status. Jade uses compact
+policy names because its firmware permits 1–15 printable characters without
+spaces.
 
 **Sign Auto-Generated Fake PSBT** builds and signs its deterministic no-funds
 PSBT in one connection. The harness does not accept arbitrary pasted PSBTs; the
-read-only PSBT field shows the latest generated or signed result.
+read-only PSBT field shows the latest generated or signed result. Signing actions
+check that owned input signatures were actually added, verify them locally, and
+check that existing transaction/metadata fields did not change. Address display
+also checks that the returned address matches the locally derived descriptor.
 
 **Sign Mixed-Ownership PSBT** is available for ranged `wpkh`. It creates three
 unique synthetic inputs: a pre-signed foreign software-wallet input and two
-hardware-owned inputs at `/0/0` and `/0/1`. Ledger must preserve the foreign
-signature and all metadata, add one signature to each owned input, keep the PSBT
-partial, and preserve its input and output counts. BitBox currently rejects the
-foreign input; the app surfaces that provider error verbatim rather than
-reporting a Bluetooth failure. The action never updates the normal PSBT field,
-finalizes, or broadcasts the transaction. It generates this mixed PSBT itself
-and does not depend on the normal fake-PSBT action.
+hardware-owned inputs at `/0/0` and `/0/1`. Jade and Ledger must preserve the
+foreign signature and all metadata, add one signature to each owned input, keep
+the PSBT partial, and preserve its input and output counts. BitBox currently
+rejects the foreign input; the app surfaces that provider error verbatim rather
+than reporting a Bluetooth failure. The action never updates the normal PSBT
+field, finalizes, or broadcasts the transaction. It generates this mixed PSBT
+itself and does not depend on the normal fake-PSBT action.
 
 ## Physical Validation
 
@@ -250,6 +305,7 @@ For each supported device path, verify:
 
 - Runtime permission handling.
 - Connection and cleanup.
+- Jade authentication and blind-PIN-server networking.
 - Version and fingerprint reads.
 - Key-expression and descriptor construction.
 - Address confirmation on the hardware wallet.

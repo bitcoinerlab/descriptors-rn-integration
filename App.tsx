@@ -9,8 +9,10 @@ import {
   signers as softwareSigners,
 } from "@bitcoinerlab/descriptors";
 import * as bitbox from "@bitcoinerlab/descriptors/bitbox";
+import * as jade from "@bitcoinerlab/descriptors/jade";
 import * as ledger from "@bitcoinerlab/descriptors/ledger";
 import * as bitboxDriverModule from "@bitcoinerlab/bitbox-react-native";
+import * as jadeDriverModule from "@bitcoinerlab/jade-react-native";
 import {
   Alert,
   Button,
@@ -34,15 +36,23 @@ const FAKE_UTXO_VALUE = 100_000n;
 const FAKE_SEND_VALUE = 90_000n;
 const MIXED_SEND_VALUE = 285_000n;
 
-type ProviderId = "bitbox" | "ledger";
+type ProviderId = "bitbox" | "jade" | "ledger";
 type Transport = "ble" | "usb";
 type BitBoxDiscoveryDevice =
   | bitboxDriverModule.BitBoxNovaBleDevice
   | bitboxDriverModule.BitBoxUsbDevice;
+type JadeDiscoveryDevice = jadeDriverModule.JadeReactNativeDevice;
+type DiscoveredDevice =
+  | { provider: "bitbox"; device: BitBoxDiscoveryDevice }
+  | { provider: "jade"; device: JadeDiscoveryDevice };
 type HardwareConnection =
   | {
       provider: "bitbox";
       session: bitbox.Session;
+    }
+  | {
+      provider: "jade";
+      session: jade.Session;
     }
   | {
       provider: "ledger";
@@ -58,6 +68,7 @@ type Scenario = {
   keyPath: string;
   position: Position;
   policyName?: string;
+  jadePolicyName?: string;
   messageSigning: boolean;
 };
 
@@ -94,6 +105,7 @@ const SCENARIOS: readonly Scenario[] = [
     keyPath: "/0/*",
     position: { index: 0 },
     policyName: "RN integration sorted multi",
+    jadePolicyName: "RN-Sorted",
     messageSigning: false,
   },
   {
@@ -103,6 +115,7 @@ const SCENARIOS: readonly Scenario[] = [
     keyPath: "/0/*",
     position: { index: 0 },
     policyName: "RN integration ordered multi",
+    jadePolicyName: "RN-Ordered",
     messageSigning: false,
   },
   {
@@ -112,6 +125,7 @@ const SCENARIOS: readonly Scenario[] = [
     keyPath: "/0/*",
     position: { index: 0 },
     policyName: "RN integration timelock",
+    jadePolicyName: "RN-Timelock",
     messageSigning: false,
   },
 ];
@@ -131,7 +145,18 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 function providerLabel(provider: ProviderId): string {
-  return provider === "bitbox" ? "BitBox" : "Ledger";
+  return provider === "bitbox"
+    ? "BitBox"
+    : provider === "jade"
+      ? "Jade"
+      : "Ledger";
+}
+
+function policyNameFor(
+  provider: ProviderId,
+  scenario: Scenario,
+): string | undefined {
+  return provider === "jade" ? scenario.jadePolicyName : scenario.policyName;
 }
 
 function assertIntegration(condition: unknown, message: string): asserts condition {
@@ -196,12 +221,12 @@ async function connectHardwareWallet({
   provider,
   transport,
   store,
-  selectedBitBoxDevice,
+  selectedDevice,
 }: {
   provider: ProviderId;
   transport: Transport;
   store: object;
-  selectedBitBoxDevice?: BitBoxDiscoveryDevice;
+  selectedDevice?: DiscoveredDevice;
 }): Promise<HardwareConnection> {
   if (transport === "ble") await requestAndroidBlePermissions();
 
@@ -212,10 +237,29 @@ async function connectHardwareWallet({
         driver: {
           module: bitboxDriverModule,
           mode: transport,
-          ...(selectedBitBoxDevice ? { device: selectedBitBoxDevice } : {}),
+          ...(selectedDevice?.provider === "bitbox"
+            ? { device: selectedDevice.device }
+            : {}),
         },
         network: BITCOIN_NETWORK,
         store: store as bitbox.Store,
+      }),
+    };
+  }
+
+  if (provider === "jade") {
+    return {
+      provider: "jade",
+      session: await jade.connect({
+        driver: {
+          module: jadeDriverModule,
+          mode: transport,
+          ...(selectedDevice?.provider === "jade"
+            ? { device: selectedDevice.device }
+            : {}),
+        },
+        network: BITCOIN_NETWORK,
+        store: store as jade.Store,
       }),
     };
   }
@@ -247,24 +291,38 @@ async function connectHardwareWallet({
 }
 
 function version(connection: HardwareConnection): Promise<string> {
-  return connection.provider === "bitbox"
-    ? bitbox.getVersion({ session: connection.session })
-    : ledger.getVersion({ session: connection.session });
+  if (connection.provider === "bitbox") {
+    return bitbox.getVersion({ session: connection.session });
+  }
+  if (connection.provider === "jade") {
+    return jade.getVersion({ session: connection.session });
+  }
+  return ledger.getVersion({ session: connection.session });
 }
 
-function masterFingerprint(connection: HardwareConnection): Promise<Uint8Array> {
-  return connection.provider === "bitbox"
-    ? bitbox.getMasterFingerprint({ session: connection.session })
-    : ledger.getMasterFingerprint({ session: connection.session });
+function masterFingerprint(
+  connection: HardwareConnection,
+): Promise<Uint8Array> {
+  if (connection.provider === "bitbox") {
+    return bitbox.getMasterFingerprint({ session: connection.session });
+  }
+  if (connection.provider === "jade") {
+    return jade.getMasterFingerprint({ session: connection.session });
+  }
+  return ledger.getMasterFingerprint({ session: connection.session });
 }
 
 function hardwareKeyExpression(
   connection: HardwareConnection,
   params: { originPath: string; keyPath: string },
 ): Promise<string> {
-  return connection.provider === "bitbox"
-    ? bitbox.keyExpression({ session: connection.session, ...params })
-    : ledger.keyExpression({ session: connection.session, ...params });
+  if (connection.provider === "bitbox") {
+    return bitbox.keyExpression({ session: connection.session, ...params });
+  }
+  if (connection.provider === "jade") {
+    return jade.keyExpression({ session: connection.session, ...params });
+  }
+  return ledger.keyExpression({ session: connection.session, ...params });
 }
 
 async function hardwareRegisterPolicy(
@@ -273,6 +331,9 @@ async function hardwareRegisterPolicy(
 ): Promise<boolean | undefined> {
   if (connection.provider === "bitbox") {
     return bitbox.registerPolicy({ session: connection.session, ...params });
+  }
+  if (connection.provider === "jade") {
+    return jade.registerPolicy({ session: connection.session, ...params });
   }
   return ledger.registerPolicy({ session: connection.session, ...params });
 }
@@ -284,22 +345,26 @@ function positionParams(position: Position) {
   };
 }
 
-function hardwareDisplayAddress(
+async function hardwareDisplayAddress(
   connection: HardwareConnection,
   descriptor: string,
   position: Position,
 ): Promise<string> {
-  return connection.provider === "bitbox"
-    ? bitbox.displayAddress({
-        session: connection.session,
-        descriptor,
-        ...positionParams(position),
-      })
-    : ledger.displayAddress({
-        session: connection.session,
-        descriptor,
-        ...positionParams(position),
-      });
+  const params = { descriptor, ...positionParams(position) };
+  const address =
+    connection.provider === "bitbox"
+      ? await bitbox.displayAddress({ session: connection.session, ...params })
+      : connection.provider === "jade"
+        ? await jade.displayAddress({ session: connection.session, ...params })
+        : await ledger.displayAddress({
+            session: connection.session,
+            ...params,
+          });
+  assertIntegration(
+    address === outputForDescriptor(descriptor, position).getAddress(),
+    "The hardware-wallet address does not match the local descriptor.",
+  );
+  return address;
 }
 
 function hardwareSignMessage(
@@ -312,20 +377,58 @@ function hardwareSignMessage(
     message: MESSAGE_TEXT,
     ...positionParams(position),
   };
-  return connection.provider === "bitbox"
-    ? bitbox.signMessage({ session: connection.session, ...params })
-    : ledger.signMessage({ session: connection.session, ...params });
+  if (connection.provider === "bitbox") {
+    return bitbox.signMessage({ session: connection.session, ...params });
+  }
+  if (connection.provider === "jade") {
+    return jade.signMessage({ session: connection.session, ...params });
+  }
+  return ledger.signMessage({ session: connection.session, ...params });
 }
 
 async function hardwareSignPsbt(
   connection: HardwareConnection,
   psbt: Psbt,
 ): Promise<string> {
+  const before = psbtStructureSnapshot(psbt);
+  const signaturesBefore = psbt.data.inputs.map(
+    (input) => input.partialSig?.length ?? 0,
+  );
   if (connection.provider === "bitbox") {
     await bitbox.signers.sign({ session: connection.session, psbt });
+  } else if (connection.provider === "jade") {
+    await jade.signers.sign({ session: connection.session, psbt });
   } else {
     await ledger.signers.sign({ session: connection.session, psbt });
   }
+  assertIntegration(
+    psbtStructureSnapshot(psbt) === before,
+    "Hardware signing changed the transaction or existing PSBT metadata.",
+  );
+  let signedInputs = 0;
+  for (const [index, input] of psbt.data.inputs.entries()) {
+    if ((input.partialSig?.length ?? 0) <= signaturesBefore[index]) continue;
+    const ownsKey = input.bip32Derivation?.some(
+      ({ masterFingerprint, pubkey }) =>
+        bytesToHex(masterFingerprint) ===
+          connection.session.store.masterFingerprint &&
+        input.partialSig?.some(
+          (signature) => bytesToHex(signature.pubkey) === bytesToHex(pubkey),
+        ),
+    );
+    if (!ownsKey) continue;
+    assertIntegration(
+      psbt.validateSignaturesOfInput(index, (pubkey, hash, signature) =>
+        ECPair.fromPublicKey(pubkey).verify(hash, signature),
+      ),
+      `Input ${index} contains an invalid hardware-wallet signature.`,
+    );
+    signedInputs += 1;
+  }
+  assertIntegration(
+    signedInputs > 0,
+    "The hardware wallet did not add any owned input signatures.",
+  );
   return psbt.toBase64();
 }
 
@@ -334,6 +437,12 @@ function hardwareErrorMessage(error: unknown, transport: Transport): string {
   const normalized = message.toLowerCase();
   if (normalized.includes("open the bitcoin app")) {
     return "Unlock your Ledger and open the Bitcoin app, then try again.";
+  }
+  if (
+    normalized.includes("pinserver") ||
+    normalized.includes("authentication failed")
+  ) {
+    return "Unlock Jade, confirm authentication, and check this device's internet access before trying again.";
   }
   if (normalized.includes("does not match store fingerprint")) {
     return "This store belongs to another wallet. Reset the selected store or reconnect the original device.";
@@ -625,11 +734,11 @@ export default function App() {
   const [provider, setProvider] = useState<ProviderId>("bitbox");
   const [transport, setTransport] = useState<Transport>("ble");
   const [scenarioId, setScenarioId] = useState<ScenarioId>("ranged");
-  const [bitboxDevices, setBitboxDevices] = useState<BitBoxDiscoveryDevice[]>([]);
-  const [selectedBitBoxDevice, setSelectedBitBoxDevice] =
-    useState<BitBoxDiscoveryDevice>();
+  const [devices, setDevices] = useState<DiscoveredDevice[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<DiscoveredDevice>();
   const [stores, setStores] = useState<Record<ProviderId, string>>({
     bitbox: EMPTY_STORE_JSON,
+    jade: EMPTY_STORE_JSON,
     ledger: EMPTY_STORE_JSON,
   });
   const [psbt, setPsbt] = useState("");
@@ -676,29 +785,29 @@ export default function App() {
   function selectProvider(nextProvider: ProviderId) {
     if (running || nextProvider === provider) return;
     clearPsbt();
-    setBitboxDevices([]);
-    setSelectedBitBoxDevice(undefined);
+    setDevices([]);
+    setSelectedDevice(undefined);
     setProvider(nextProvider);
   }
 
   function selectTransport(nextTransport: Transport) {
     if (running || nextTransport === transport) return;
     clearPsbt();
-    setBitboxDevices([]);
-    setSelectedBitBoxDevice(undefined);
+    setDevices([]);
+    setSelectedDevice(undefined);
     setTransport(nextTransport);
   }
 
-  function selectBitBoxDevice(device?: BitBoxDiscoveryDevice) {
+  function selectDevice(device?: DiscoveredDevice) {
     if (running) return;
     clearPsbt();
-    setSelectedBitBoxDevice(device);
+    setSelectedDevice(device);
   }
 
-  async function discoverBitBoxDevices() {
+  async function discoverDevices() {
     if (
       busyRef.current ||
-      provider !== "bitbox" ||
+      provider === "ledger" ||
       !transports.includes(transport)
     ) {
       return;
@@ -707,25 +816,41 @@ export default function App() {
     setRunning(true);
     resetLog();
     clearPsbt();
-    setBitboxDevices([]);
-    setSelectedBitBoxDevice(undefined);
+    setDevices([]);
+    setSelectedDevice(undefined);
     try {
-      add(`Discovering BitBox devices over ${transport.toUpperCase()}...`);
+      add(
+        `Discovering ${providerLabel(provider)} devices over ${transport.toUpperCase()}...`,
+      );
       if (transport === "ble") await requestAndroidBlePermissions();
       assertIntegration(
         transport === "ble" || Platform.OS === "android",
-        "BitBox USB discovery is available only on Android.",
+        "USB discovery is available only on Android.",
       );
-      const devices =
-        transport === "ble"
-          ? await bitboxDriverModule.discoverBitBoxNovaBleDevices({
-              scanDurationMs: 5000,
-            })
-          : await bitboxDriverModule.listAttachedBitBoxUsbDevices();
+      let found: DiscoveredDevice[];
+      if (provider === "bitbox") {
+        const results =
+          transport === "ble"
+            ? await bitboxDriverModule.discoverBitBoxNovaBleDevices({
+                scanDurationMs: 5000,
+              })
+            : await bitboxDriverModule.listAttachedBitBoxUsbDevices();
+        found = results.map((device) => ({ provider: "bitbox", device }));
+      } else {
+        const results =
+          transport === "ble"
+            ? await jadeDriverModule.discoverJadeBleDevices({
+                scanDurationMs: 5000,
+              })
+            : await jadeDriverModule.listAttachedJadeUsbDevices();
+        found = results.map((device) => ({ provider: "jade", device }));
+      }
       if (!mountedRef.current) return;
-      setBitboxDevices(devices);
-      add(`Found ${devices.length} BitBox device${devices.length === 1 ? "" : "s"}.`);
-      for (const device of devices) {
+      setDevices(found);
+      add(
+        `Found ${found.length} ${providerLabel(provider)} device${found.length === 1 ? "" : "s"}.`,
+      );
+      for (const { device } of found) {
         add(
           `${device.name ?? device.deviceId}${
             device.transport === "ble" && device.rssi !== undefined
@@ -737,7 +862,7 @@ export default function App() {
     } catch (error) {
       add(`ERROR: ${errorMessage(error)}`);
       Alert.alert(
-        `BitBox ${transport.toUpperCase()} discovery failed`,
+        `${providerLabel(provider)} ${transport.toUpperCase()} discovery failed`,
         hardwareErrorMessage(error, transport),
       );
     } finally {
@@ -757,23 +882,24 @@ export default function App() {
     resetLog();
     const activeProvider = provider;
     const activeTransport = transport;
-    const activeBitBoxDevice =
-      activeProvider === "bitbox" &&
-      selectedBitBoxDevice?.transport === activeTransport
-        ? selectedBitBoxDevice
+    const activeDevice =
+      selectedDevice?.provider === activeProvider &&
+      selectedDevice.device.transport === activeTransport
+        ? selectedDevice
         : undefined;
     let activeConnection: HardwareConnection | undefined;
     try {
       add(title);
       add(`Platform: ${Platform.OS}; provider: ${providerLabel(activeProvider)}.`);
       add(`Transport: ${activeTransport.toUpperCase()}.`);
-      if (activeProvider === "bitbox") {
+      if (activeProvider === "bitbox" || activeProvider === "jade") {
         add(
-          `Device: ${
-            activeBitBoxDevice?.name ??
-            activeBitBoxDevice?.deviceId ??
-            "automatic / first matching"
-          }.`,
+          `Device: ${activeDevice?.device.name ?? activeDevice?.device.deviceId ?? "automatic / first matching"}.`,
+        );
+      }
+      if (activeProvider === "jade") {
+        add(
+          "Unlock Jade and approve authentication; the phone must be online.",
         );
       }
       const store = parseStoreJson(stores[activeProvider]);
@@ -781,7 +907,7 @@ export default function App() {
         provider: activeProvider,
         transport: activeTransport,
         store,
-        selectedBitBoxDevice: activeBitBoxDevice,
+        selectedDevice: activeDevice,
       });
       if (
         !mountedRef.current ||
@@ -860,78 +986,92 @@ export default function App() {
   }
 
   function runRegisterPolicy() {
-    void runWithConnection("Running shared policy registration check...", async (hardware) => {
-      const descriptor = await buildDescriptor(hardware, scenario);
-      if (!scenario.policyName) {
-        add("This is a standard descriptor; device policy registration is not required.");
-        return;
-      }
-      add("Calling descriptors registerPolicy; confirm on the device if requested...");
-      const wasPolicyStoredOnDevice = await hardwareRegisterPolicy(hardware, {
-        descriptor,
-        name: scenario.policyName,
-      });
-      add("Policy registration/check complete; store metadata was updated.");
-      if (wasPolicyStoredOnDevice === true) {
-        const message =
-          "BitBox reported that this policy was already stored on the device. No registration confirmation was needed.";
-        add(message);
-        Alert.alert("Policy Already Stored", message);
-      } else if (wasPolicyStoredOnDevice === false) {
-        const message =
-          "BitBox reported that this policy was not stored on the device. Registration has now completed.";
-        add(message);
-        Alert.alert("Policy Registered", message);
-      } else {
-        const message = `${providerLabel(hardware.provider)} does not report persistent device policy storage for this operation.`;
-        add(message);
-        Alert.alert("Policy Registration Complete", message);
-      }
-    });
+    void runWithConnection(
+      "Running shared policy registration check...",
+      async (hardware) => {
+        const descriptor = await buildDescriptor(hardware, scenario);
+        const registrationName = policyNameFor(hardware.provider, scenario);
+        if (!registrationName) {
+          add(
+            "This is a standard descriptor; device policy registration is not required.",
+          );
+          return;
+        }
+        add(
+          "Calling descriptors registerPolicy; confirm on the device if requested...",
+        );
+        const wasPolicyStoredOnDevice = await hardwareRegisterPolicy(hardware, {
+          descriptor,
+          name: registrationName,
+        });
+        add("Policy registration/check complete; store metadata was updated.");
+        if (wasPolicyStoredOnDevice === true) {
+          const message = `${providerLabel(hardware.provider)} reported that this policy was already stored on the device. No registration confirmation was needed.`;
+          add(message);
+          Alert.alert("Policy Already Stored", message);
+        } else if (wasPolicyStoredOnDevice === false) {
+          const message = `${providerLabel(hardware.provider)} reported that this policy was not stored on the device. Registration has now completed.`;
+          add(message);
+          Alert.alert("Policy Registered", message);
+        } else {
+          const message = `${providerLabel(hardware.provider)} does not report persistent device policy storage for this operation.`;
+          add(message);
+          Alert.alert("Policy Registration Complete", message);
+        }
+      },
+    );
   }
 
   function runDisplayAddress() {
-    void runWithConnection("Running shared address-display workflow...", async (hardware) => {
-      const descriptor = await buildDescriptor(hardware, scenario);
-      if (scenario.policyName) {
-        add("Ensuring policy registration before address display...");
-        await hardwareRegisterPolicy(hardware, {
+    void runWithConnection(
+      "Running shared address-display workflow...",
+      async (hardware) => {
+        const descriptor = await buildDescriptor(hardware, scenario);
+        const registrationName = policyNameFor(hardware.provider, scenario);
+        if (registrationName) {
+          add("Ensuring policy registration before address display...");
+          await hardwareRegisterPolicy(hardware, {
+            descriptor,
+            name: registrationName,
+          });
+        }
+        add("Requesting address display; confirm on the hardware wallet...");
+        const address = await hardwareDisplayAddress(
+          hardware,
           descriptor,
-          name: scenario.policyName,
-        });
-      }
-      add("Requesting address display; confirm on the hardware wallet...");
-      const address = await hardwareDisplayAddress(
-        hardware,
-        descriptor,
-        scenario.position,
-      );
-      add(`Displayed address: ${address}`);
-    });
+          scenario.position,
+        );
+        add(`Displayed address: ${address}`);
+      },
+    );
   }
 
   function runFakePsbtSigning() {
-    void runWithConnection("Generating and signing the shared fake PSBT...", async (hardware) => {
-      const descriptor = await buildDescriptor(hardware, scenario);
-      if (scenario.policyName) {
-        add("Ensuring policy registration before PSBT signing...");
-        await hardwareRegisterPolicy(hardware, {
+    void runWithConnection(
+      "Generating and signing the shared fake PSBT...",
+      async (hardware) => {
+        const descriptor = await buildDescriptor(hardware, scenario);
+        const registrationName = policyNameFor(hardware.provider, scenario);
+        if (registrationName) {
+          add("Ensuring policy registration before PSBT signing...");
+          await hardwareRegisterPolicy(hardware, {
+            descriptor,
+            name: registrationName,
+          });
+        }
+        const generated = await generateFakePsbt(
+          hardware,
           descriptor,
-          name: scenario.policyName,
-        });
-      }
-      const generated = await generateFakePsbt(
-        hardware,
-        descriptor,
-        scenario.position,
-      );
-      setPsbt(generated);
-      add(`Generated fake PSBT: ${summarizeValue(generated)}`);
-      const parsed = Psbt.fromBase64(generated, { network: BITCOIN_NETWORK });
-      const signed = await hardwareSignPsbt(hardware, parsed);
-      setPsbt(signed);
-      add(`Signed PSBT: ${summarizeValue(signed)}`);
-    });
+          scenario.position,
+        );
+        setPsbt(generated);
+        add(`Generated fake PSBT: ${summarizeValue(generated)}`);
+        const parsed = Psbt.fromBase64(generated, { network: BITCOIN_NETWORK });
+        const signed = await hardwareSignPsbt(hardware, parsed);
+        setPsbt(signed);
+        add(`Signed PSBT: ${summarizeValue(signed)}`);
+      },
+    );
   }
 
   function runSignMessage() {
@@ -1048,46 +1188,52 @@ export default function App() {
   }
 
   function runFullWorkflow() {
-    void runWithConnection("Running the complete shared workflow...", async (hardware) => {
-      const descriptor = await readBasicsAndDescriptor(hardware);
-      if (scenario.policyName) {
-        add("Registering/checking the non-standard policy...");
-        await hardwareRegisterPolicy(hardware, {
-          descriptor,
-          name: scenario.policyName,
-        });
-      } else {
-        add("Standard descriptor: registration not required.");
-      }
-      add("Displaying address on the device...");
-      const address = await hardwareDisplayAddress(
-        hardware,
-        descriptor,
-        scenario.position,
-      );
-      add(`Displayed address: ${address}`);
-      const generated = await generateFakePsbt(
-        hardware,
-        descriptor,
-        scenario.position,
-      );
-      setPsbt(generated);
-      add(`Generated shared fake PSBT: ${summarizeValue(generated)}`);
-      const parsed = Psbt.fromBase64(generated, { network: BITCOIN_NETWORK });
-      const signed = await hardwareSignPsbt(hardware, parsed);
-      setPsbt(signed);
-      add(`Signed PSBT: ${summarizeValue(signed)}`);
-      if (scenario.messageSigning) {
-        const signature = await hardwareSignMessage(
+    void runWithConnection(
+      "Running the complete shared workflow...",
+      async (hardware) => {
+        const descriptor = await readBasicsAndDescriptor(hardware);
+        const registrationName = policyNameFor(hardware.provider, scenario);
+        if (registrationName) {
+          add("Registering/checking the non-standard policy...");
+          await hardwareRegisterPolicy(hardware, {
+            descriptor,
+            name: registrationName,
+          });
+        } else {
+          add("Standard descriptor: registration not required.");
+        }
+        add("Displaying address on the device...");
+        const address = await hardwareDisplayAddress(
           hardware,
           descriptor,
           scenario.position,
         );
-        add(`Message signature: ${summarizeValue(bytesToHex(signature))}`);
-      } else {
-        add("Message signing skipped by the selected scenario capability declaration.");
-      }
-    });
+        add(`Displayed address: ${address}`);
+        const generated = await generateFakePsbt(
+          hardware,
+          descriptor,
+          scenario.position,
+        );
+        setPsbt(generated);
+        add(`Generated shared fake PSBT: ${summarizeValue(generated)}`);
+        const parsed = Psbt.fromBase64(generated, { network: BITCOIN_NETWORK });
+        const signed = await hardwareSignPsbt(hardware, parsed);
+        setPsbt(signed);
+        add(`Signed PSBT: ${summarizeValue(signed)}`);
+        if (scenario.messageSigning) {
+          const signature = await hardwareSignMessage(
+            hardware,
+            descriptor,
+            scenario.position,
+          );
+          add(`Message signature: ${summarizeValue(bytesToHex(signature))}`);
+        } else {
+          add(
+            "Message signing skipped by the selected scenario capability declaration.",
+          );
+        }
+      },
+    );
   }
 
   function resetStore() {
@@ -1116,13 +1262,13 @@ export default function App() {
           <Text style={styles.eyebrow}>Descriptors RN Integration</Text>
           <Text style={styles.title}>One workflow, multiple wallets</Text>
           <Text style={styles.description}>
-            Select a provider, connection, optional discovered BitBox device, and
+            Select a provider, connection, optional discovered device, and
             shared descriptor scenario. Every action releases its connection.
           </Text>
 
           <Text style={styles.sectionLabel}>Provider</Text>
           <View style={styles.choiceRow}>
-            {(["bitbox", "ledger"] as const).map((item) => (
+            {(["bitbox", "jade", "ledger"] as const).map((item) => (
               <Choice
                 key={item}
                 label={providerLabel(item)}
@@ -1143,7 +1289,9 @@ export default function App() {
                     ? "Bluetooth (BLE)"
                     : provider === "ledger"
                       ? "USB (HID)"
-                      : "USB"
+                      : provider === "jade"
+                        ? "USB (Serial)"
+                        : "USB"
                 }
                 selected={transport === item}
                 disabled={running}
@@ -1151,33 +1299,38 @@ export default function App() {
               />
             ))}
           </View>
-          {provider === "bitbox" ? (
+          {provider !== "ledger" ? (
             <>
               <Button
-                title="Discover BitBox Devices"
-                onPress={() => void discoverBitBoxDevices()}
+                title={`Discover ${providerLabel(provider)} Devices`}
+                onPress={() => void discoverDevices()}
                 disabled={actionDisabled}
               />
               <View style={styles.choiceColumn}>
                 <Choice
                   label="Automatic / first matching device"
-                  selected={selectedBitBoxDevice === undefined}
+                  selected={selectedDevice === undefined}
                   disabled={running}
-                  onPress={() => selectBitBoxDevice()}
+                  onPress={() => selectDevice()}
                 />
-                {bitboxDevices.map((device) => (
-                  <Choice
-                    key={`${device.transport}:${device.deviceId}`}
-                    label={`${device.name ?? device.deviceId}${
-                      device.transport === "ble" && device.rssi !== undefined
-                        ? ` (RSSI ${device.rssi})`
-                        : ""
-                    }`}
-                    selected={selectedBitBoxDevice?.deviceId === device.deviceId}
-                    disabled={running}
-                    onPress={() => selectBitBoxDevice(device)}
-                  />
-                ))}
+                {devices.map((entry) => {
+                  const { device } = entry;
+                  return (
+                    <Choice
+                      key={`${device.transport}:${device.deviceId}`}
+                      label={`${device.name ?? device.deviceId}${
+                        device.transport === "ble" && device.rssi !== undefined
+                          ? ` (RSSI ${device.rssi})`
+                          : ""
+                      }`}
+                      selected={
+                        selectedDevice?.device.deviceId === device.deviceId
+                      }
+                      disabled={running}
+                      onPress={() => selectDevice(entry)}
+                    />
+                  );
+                })}
               </View>
             </>
           ) : null}
@@ -1214,9 +1367,17 @@ export default function App() {
 
           <Text style={styles.sectionLabel}>Workflow Actions</Text>
           <View style={styles.buttonGrid}>
-            <Button title="Read + Build" onPress={runReadOnly} disabled={actionDisabled} />
-            {scenario.policyName ? (
-              <Button title="Register / Check" onPress={runRegisterPolicy} disabled={actionDisabled} />
+            <Button
+              title="Read + Build"
+              onPress={runReadOnly}
+              disabled={actionDisabled}
+            />
+            {policyNameFor(provider, scenario) ? (
+              <Button
+                title="Register / Check"
+                onPress={runRegisterPolicy}
+                disabled={actionDisabled}
+              />
             ) : null}
             <Button title="Display Address" onPress={runDisplayAddress} disabled={actionDisabled} />
             <Button

@@ -23,6 +23,7 @@
     "plugins": [
       "expo-dev-client",
       "@bitcoinerlab/bitbox-react-native/app.plugin",
+      "@bitcoinerlab/jade-react-native/app.plugin",
       [
         "react-native-ble-plx",
         {

@@ -5,7 +5,10 @@
   "main": "index.ts",
   "dependencies": {
     "@bitcoinerlab/bitbox-react-native": "^0.1.0",
-    "@bitcoinerlab/descriptors": "^3.2.0",
+    "@bitcoinerlab/descriptors": "file:.local/packages/bitcoinerlab-descriptors-3.3.0.tgz",
+    "@bitcoinerlab/descriptors-core": "file:.local/packages/bitcoinerlab-descriptors-core-3.3.0.tgz",
+    "@bitcoinerlab/jade": "file:.local/packages/bitcoinerlab-jade-0.1.0.tgz",
+    "@bitcoinerlab/jade-react-native": "file:.local/packages/bitcoinerlab-jade-react-native-0.1.0.tgz",
     "@ledgerhq/ledger-bitcoin": "0.3.1",
     "@ledgerhq/react-native-hid": "6.39.5",
     "@ledgerhq/react-native-hw-transport-ble": "6.41.0",
@@ -22,6 +25,7 @@
     "typescript": "~5.9.2"
   },
   "scripts": {
+    "prepare:local": "node scripts/prepare-local.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
