@@ -179,6 +179,9 @@ version, and both must resolve to one native installation:
 npm ls @ledgerhq/react-native-hw-transport-ble react-native-ble-plx --all
 ```
 
+See [SECURITY.md](SECURITY.md) for dependency security checks, the tested Metro
+and PostCSS overrides, and the remaining lower-severity upstream findings.
+
 ## Verify The JavaScript Build
 
 ```sh
