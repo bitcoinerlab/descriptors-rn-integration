@@ -13,7 +13,7 @@
     "@ledgerhq/react-native-hid": "6.39.5",
     "@ledgerhq/react-native-hw-transport-ble": "6.41.0",
     "buffer": "^6.0.3",
-    "expo": "~54.0.0",
+    "expo": "~54.0.38",
     "expo-dev-client": "~6.0.21",
     "expo-modules-core": "~3.0.30",
     "react": "19.1.0",
@@ -24,12 +24,20 @@
     "@types/react": "~19.1.10",
     "typescript": "~5.9.2"
   },
+  "overrides": {
+    "metro": "0.83.8",
+    "@expo/metro-config": {
+      "postcss": "^8.5.23"
+    }
+  },
   "scripts": {
     "prepare:local": "node scripts/prepare-local.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
+    "test:security": "node --test scripts/security-deps.test.cjs",
+    "audit:security": "npm audit --audit-level=high",
     "test:bundle:ios": "expo export --platform ios --output-dir dist/metro-ios",
     "test:bundle:android": "expo export --platform android --output-dir dist/metro-android",
     "test:bundle": "npm run test:bundle:ios && npm run test:bundle:android"
